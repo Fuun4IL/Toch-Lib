@@ -58,8 +58,8 @@ Each area is its own entry point; anything you don't import tree-shakes away.
 | Import from | Contents |
 | --- | --- |
 | `toch-lib/core` | `TOCH_LIB_CONFIG` + config types, `BaseComponent`, utility types, `KeyValueStore` |
-| `toch-lib/http` | `BaseApiService` — explicit `get`/`post`/`put`/`patch`/`delete` |
-| `toch-lib/sap` | `BaseSapApiService`, `SapFilter` + formatter, SAP date/time parsers, `sap-message` processing |
+| `toch-lib/http` | `ApiClient` — explicit `get`/`post`/`put`/`patch`/`delete` against the configured base URL |
+| `toch-lib/sap` | `SapApiClient` + `forService()`, `SapFilter` + formatter, SAP date/time parsers, `sap-message` processing |
 | `toch-lib/odata` | Fluent OData **v2 + v4** query builder (pure, no Angular services) |
 | `toch-lib/csrf` | SAP `X-CSRF-Token: Fetch` interceptor + `CsrfTokenService` |
 | `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) + HTTP GET cache interceptor |
@@ -69,40 +69,55 @@ Each area is its own entry point; anything you don't import tree-shakes away.
 | `toch-lib/overlay` | `BaseOverlayService` (ref-counted CDK overlay; needs `@angular/cdk`) |
 | `toch-lib` | everything above except `overlay`, plus `provideTochLib()` |
 
-## API services (`toch-lib/http`, `toch-lib/sap`)
+## API clients (`toch-lib/http`, `toch-lib/sap`)
 
-All HTTP goes through a base service — features never touch `HttpClient` directly, and every call site shows its verb:
+Composition, not inheritance: a feature service **injects a client object** and calls it — no `extends`, and every call site shows its verb. `forService()` gives you a client scoped to one OData service:
 
 ```ts
-import { BaseSapApiService } from 'toch-lib/sap';
+import { SapApiClient } from 'toch-lib/sap';
 
 @Injectable()
-export class OrdersApiService extends BaseSapApiService {
-  protected readonly service = 'ZORDERS_SRV';
+export class OrdersService {
+  private readonly api = inject(SapApiClient).forService('ZORDERS_SRV');
 
   getOrders() {
-    return this.getEntitySet<Order>(this.entityUrl('OrderSet'), {
+    return this.api.getEntitySet<Order>('OrderSet', {       // -> ZORDERS_SRV/OrderSet
       filters: [
         { path: 'Status', op: 'eq', value: 'A' },
         { path: 'Created', op: 'bt', low: from, high: to },
       ],
       expand: ['ToItems'],
-    });                                    // -> { results: Order[], count? }
+    });                                                     // -> { results: Order[], count? }
   }
 
   getOrder(id: string) {
-    return this.getEntity<Order>(this.entityUrl(`OrderSet('${id}')`));   // -> Order (d unwrapped)
+    return this.api.getEntity<Order>(`OrderSet('${id}')`);  // -> Order (d unwrapped)
   }
 
   createOrder(order: Partial<Order>) {
-    return this.createEntity<Order>(this.entityUrl('OrderSet'), order);  // CSRF token added automatically
+    return this.api.createEntity<Order>('OrderSet', order); // CSRF token added automatically
   }
 }
 ```
 
 - V2 envelopes (`{d: ...}`, `{d: {results, __count}}`) are unwrapped for you; use `getEntitySetResponse` when you need headers.
 - `sap-language` (default `he`) and `sap.defaultParams` (e.g. `sap-client`) are appended to every request.
-- Non-SAP backends: extend `BaseApiService` from `toch-lib/http` and use `this.get/post/put/patch/delete`.
+- Cross-service calls: inject `SapApiClient` itself and pass full `SERVICE/EntitySet` paths.
+
+Non-SAP backends — same idea with the plain HTTP client:
+
+```ts
+import { ApiClient } from 'toch-lib/http';
+
+@Injectable()
+export class ReportsService {
+  private readonly api = inject(ApiClient);                     // config api.baseUrl
+  // private readonly other = inject(ApiClient).withBaseUrl('/other-api');
+
+  getReports()          { return this.api.get<Report[]>('reports'); }
+  saveReport(r: Report) { return this.api.post<Report>('reports', r); }
+}
+```
 
 ## SAP utilities (`toch-lib/sap`)
 
@@ -233,8 +248,8 @@ export class MyComponent extends BaseComponent {
 | In the template | Replace with |
 | --- | --- |
 | `@toch/sap-utils` (vendored folder) | `toch-lib/sap` (same function names; `proccess*` → `process*Messages`) |
-| `base/base-api.service.ts` | `BaseApiService` from `toch-lib/http` (explicit verbs instead of `_request`) |
-| `base/base-sap-api.service.ts` | `BaseSapApiService` from `toch-lib/sap` |
+| `base/base-api.service.ts` | inject `ApiClient` from `toch-lib/http` (explicit verbs instead of `_request`, composition instead of `extends`) |
+| `base/base-sap-api.service.ts` | inject `SapApiClient` from `toch-lib/sap` (use `.forService('ZXXX_SRV')`) |
 | `base/base.component.ts`, `base/utility.types.ts` | `toch-lib/core` |
 | `base/base-overlay.service.ts` | `toch-lib/overlay` |
 | `core/interceptors/cache.interceptor.ts` | config-gated interceptor from `toch-lib/cache` (adds TTL + invalidation) |

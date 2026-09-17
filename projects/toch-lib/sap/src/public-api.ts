@@ -37,4 +37,4 @@ export {
   isSubstringFilter,
 } from './lib/sap-filter';
 export { processSapSuccessMessages, processSapErrorMessages } from './lib/sap-messages';
-export { BaseSapApiService, SapRequestOptions } from './lib/base-sap-api.service';
+export { SapApiClient, SapServiceClient, SapRequestOptions } from './lib/sap-api-client';
