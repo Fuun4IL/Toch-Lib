@@ -1,6 +1,7 @@
 import { Provider } from '@angular/core';
 import { TochLibConfig, TOCH_LIB_CONFIG } from 'toch-lib/core';
 import { provideTochCsrfInterceptor } from 'toch-lib/csrf';
+import { provideTochCacheInterceptor } from 'toch-lib/cache';
 
 /**
  * Registers the library configuration and the CSRF interceptor.
@@ -23,5 +24,11 @@ import { provideTochCsrfInterceptor } from 'toch-lib/csrf';
  * `toch-lib/csrf`, `toch-lib/core`) and provide `TOCH_LIB_CONFIG` yourself.
  */
 export function provideTochLib(config: TochLibConfig = {}): Provider[] {
-  return [{ provide: TOCH_LIB_CONFIG, useValue: config }, ...provideTochCsrfInterceptor()];
+  return [
+    { provide: TOCH_LIB_CONFIG, useValue: config },
+    // Both interceptors are config-gated: without a matching config section
+    // they pass every request through untouched.
+    ...provideTochCsrfInterceptor(),
+    ...provideTochCacheInterceptor(),
+  ];
 }

@@ -8,8 +8,13 @@
  */
 export * from 'toch-lib/core';
 export * from 'toch-lib/odata';
+export * from 'toch-lib/http';
+export * from 'toch-lib/sap';
 export * from 'toch-lib/csrf';
 export * from 'toch-lib/auth';
 export * from 'toch-lib/cache';
 export * from 'toch-lib/session';
+export * from 'toch-lib/logger';
+// toch-lib/overlay is intentionally NOT re-exported here: it needs the
+// optional @angular/cdk peer — import it from 'toch-lib/overlay' directly.
 export { provideTochLib } from './lib/provide-toch-lib';

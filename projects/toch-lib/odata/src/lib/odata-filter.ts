@@ -109,6 +109,24 @@ class InNode extends ODataFilterNode {
   }
 }
 
+class BetweenNode extends ODataFilterNode {
+  constructor(
+    private readonly field: string,
+    private readonly low: ODataPrimitive,
+    private readonly high: ODataPrimitive,
+    private readonly negate: boolean
+  ) {
+    super();
+  }
+  render(version: ODataVersion): string {
+    const range = `(${this.field} ge ${formatValue(this.low, version)} and ${this.field} le ${formatValue(
+      this.high,
+      version
+    )})`;
+    return this.negate ? `not ${range}` : range;
+  }
+}
+
 /** Factory helpers to build `$filter` expressions. */
 export const filter = {
   eq: (field: string, value: ODataPrimitive) => new ComparisonNode(field, 'eq', value) as ODataFilterNode,
@@ -125,6 +143,12 @@ export const filter = {
 
   /** V4: `field in (...)` — V2: expanded to an or-chain of eq. */
   in: (field: string, values: ODataPrimitive[]) => new InNode(field, values) as ODataFilterNode,
+
+  /** Inclusive range: `(field ge low and field le high)`. */
+  between: (field: string, low: ODataPrimitive, high: ODataPrimitive) =>
+    new BetweenNode(field, low, high, false) as ODataFilterNode,
+  notBetween: (field: string, low: ODataPrimitive, high: ODataPrimitive) =>
+    new BetweenNode(field, low, high, true) as ODataFilterNode,
 
   and: (...nodes: ODataFilterNode[]) => new LogicalNode('and', nodes) as ODataFilterNode,
   or: (...nodes: ODataFilterNode[]) => new LogicalNode('or', nodes) as ODataFilterNode,

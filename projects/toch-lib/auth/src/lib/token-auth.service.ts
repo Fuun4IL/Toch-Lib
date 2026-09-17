@@ -13,7 +13,7 @@ import { AuthState, AuthTokens, AuthUser, decodeJwt } from './auth.models';
  * backend/IdP however you need and hand the result to `setTokens`/`setUser`.
  */
 @Injectable({ providedIn: 'root' })
-export class AuthService {
+export class TokenAuthService {
   private readonly config = inject(TOCH_LIB_CONFIG, { optional: true })?.auth ?? {};
   private readonly store = new KeyValueStore(
     this.config.storage ?? 'session',

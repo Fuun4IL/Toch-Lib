@@ -1,138 +1,255 @@
 # Toch-Lib
 
-Angular utilities for working with SAP and other backends — one library, **Angular 16 through 20** (built in partial-Ivy mode, peer range `>=16 <21`).
+Angular utilities for working with SAP backends — the shared logic layer for projects started from **toch-template**, so base services, SAP helpers, caching, auth and logging live in one versioned package instead of being copy-pasted per project.
 
-- 🔎 **OData v2 + v4 query builder** — one fluent API, version-aware output
-- 🔐 **Auth service** — token storage, JWT expiry, roles, auth state as observables
-- 🎟️ **SSO service** — cookie/ticket SSO ping + OAuth2/OIDC redirect helpers with PKCE
-- 🗃️ **Cache service** — TTL, tags, validate/invalidate, HTTP cache-through
-- ⏱️ **Session service** — session data, idle timeout, backend keep-alive
-- 🛡️ **CSRF interceptor** — SAP `X-CSRF-Token: Fetch` pattern with automatic 403 retry
+Works with **Angular 16 through 20** (partial-Ivy build, peer range `>=16 <21`).
 
-## Quick start
+## Installing in a project
 
 ```bash
 npm install toch-lib
 ```
 
+Until the package is on an npm registry, install it from a packed tarball:
+
+```bash
+# in this repo
+npm run pack        # produces dist/toch-lib/toch-lib-0.1.0.tgz
+
+# in your app
+npm install ../path/to/toch-lib-0.1.0.tgz
+```
+
+`toch-lib/overlay` additionally needs `@angular/cdk` (optional peer — only install it if you use the overlay entry).
+
+## Setup
+
+Register the config and interceptors once in `app.config.ts`:
+
 ```ts
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 import { provideTochLib } from 'toch-lib';
+import { provideMockAuth } from 'toch-lib/auth';        // or provideSsoAuth()
+import { provideTochLogger } from 'toch-lib/logger';
 
-bootstrapApplication(AppComponent, {
+export const appConfig: ApplicationConfig = {
   providers: [
     provideHttpClient(withInterceptorsFromDi()),
     provideTochLib({
-      csrf: { fetchUrl: '/sap/opu/odata/sap/MY_SRV/', urlPrefixes: ['/sap/'] },
-      session: { idleTimeoutMs: 30 * 60_000, keepAliveUrl: '/sap/public/ping' },
+      api:  { baseUrl: '/sap/opu/odata/sap' },
+      sap:  { language: 'he', defaultParams: { 'sap-client': '100' } },
+      csrf: { fetchUrl: '/sap/opu/odata/sap/ZMY_SRV/', urlPrefixes: ['/sap/'] },
+      cache: { interceptor: { urlPrefixes: ['/sap/'], ttlMs: 60_000 } },
+      sso:  { pingUrl: '/sap/opu/odata/sap/ZMY_SRV/', userInfoUrl: '/sap/bc/ui2/start_up' },
+      session: { idleTimeoutMs: 30 * 60_000 },
     }),
+    ...provideMockAuth(MOCK_USER),          // dev — swap for ...provideSsoAuth() in prod
+    ...provideTochLogger('matomo'),         // 'console' (default) | 'matomo' | custom adapter
   ],
-});
+};
 ```
 
-NgModule apps: put `provideTochLib(...)` in the root module's `providers` instead.
+`provideTochLib` registers the CSRF and cache interceptors; both stay inactive until their config section exists, so enabling them is purely a config decision.
 
 ## Entry points — take only what you need
 
-Every area ships as its own entry point, so unused parts tree-shake away completely:
+Each area is its own entry point; anything you don't import tree-shakes away.
 
 | Import from | Contents |
 | --- | --- |
-| `toch-lib/odata` | OData v2/v4 query builder (no Angular services, pure) |
-| `toch-lib/auth` | `AuthService`, `SsoService`, JWT helpers |
-| `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) |
-| `toch-lib/session` | `SessionService` (idle timeout, keep-alive) |
-| `toch-lib/csrf` | CSRF interceptor + `CsrfTokenService` |
-| `toch-lib/core` | `TOCH_LIB_CONFIG` token, config types, storage helper |
-| `toch-lib` | everything above + `provideTochLib()` |
+| `toch-lib/core` | `TOCH_LIB_CONFIG` + config types, `BaseComponent`, utility types, `KeyValueStore` |
+| `toch-lib/http` | `BaseApiService` — explicit `get`/`post`/`put`/`patch`/`delete` |
+| `toch-lib/sap` | `BaseSapApiService`, `SapFilter` + formatter, SAP date/time parsers, `sap-message` processing |
+| `toch-lib/odata` | Fluent OData **v2 + v4** query builder (pure, no Angular services) |
+| `toch-lib/csrf` | SAP `X-CSRF-Token: Fetch` interceptor + `CsrfTokenService` |
+| `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) + HTTP GET cache interceptor |
+| `toch-lib/auth` | Adapter-based `AuthService` (signal), mock/SSO adapters, `TokenAuthService` (JWT), `SsoService` |
+| `toch-lib/session` | `SessionService` — idle timeout, keep-alive, session data |
+| `toch-lib/logger` | `LoggerService` with console/Matomo adapters |
+| `toch-lib/overlay` | `BaseOverlayService` (ref-counted CDK overlay; needs `@angular/cdk`) |
+| `toch-lib` | everything above except `overlay`, plus `provideTochLib()` |
+
+## API services (`toch-lib/http`, `toch-lib/sap`)
+
+All HTTP goes through a base service — features never touch `HttpClient` directly, and every call site shows its verb:
 
 ```ts
-import { odataV4 } from 'toch-lib/odata';   // pulls in only the query builder
-import { CacheService } from 'toch-lib/cache';
+import { BaseSapApiService } from 'toch-lib/sap';
+
+@Injectable()
+export class OrdersApiService extends BaseSapApiService {
+  protected readonly service = 'ZORDERS_SRV';
+
+  getOrders() {
+    return this.getEntitySet<Order>(this.entityUrl('OrderSet'), {
+      filters: [
+        { path: 'Status', op: 'eq', value: 'A' },
+        { path: 'Created', op: 'bt', low: from, high: to },
+      ],
+      expand: ['ToItems'],
+    });                                    // -> { results: Order[], count? }
+  }
+
+  getOrder(id: string) {
+    return this.getEntity<Order>(this.entityUrl(`OrderSet('${id}')`));   // -> Order (d unwrapped)
+  }
+
+  createOrder(order: Partial<Order>) {
+    return this.createEntity<Order>(this.entityUrl('OrderSet'), order);  // CSRF token added automatically
+  }
+}
 ```
 
-When you skip `provideTochLib`, configure via the token from core:
+- V2 envelopes (`{d: ...}`, `{d: {results, __count}}`) are unwrapped for you; use `getEntitySetResponse` when you need headers.
+- `sap-language` (default `he`) and `sap.defaultParams` (e.g. `sap-client`) are appended to every request.
+- Non-SAP backends: extend `BaseApiService` from `toch-lib/http` and use `this.get/post/put/patch/delete`.
+
+## SAP utilities (`toch-lib/sap`)
+
+Replaces the vendored `@toch/sap-utils` with the same call signatures (typos fixed):
 
 ```ts
-import { TOCH_LIB_CONFIG } from 'toch-lib/core';
-import { provideTochCsrfInterceptor } from 'toch-lib/csrf';
-
-providers: [
-  { provide: TOCH_LIB_CONFIG, useValue: { csrf: { fetchUrl: '/sap/opu/odata/sap/MY_SRV/' } } },
-  provideTochCsrfInterceptor(),
-]
+parseDateForSAP(date)          // '/Date(1705307400000)/'         (JSON bodies)
+parseDateForSAPKey(date)       // "datetime'2024-01-15T08:30:00'" (keys & filters)
+parseDateOffsetForSAPKey(date) // "datetimeoffset'...+02:00'"
+parseTimeForSAP('08:30:15')    // 'PT08H30M15S'
+parseSAPDate('/Date(...)/')    // Date
+parseSAPTime('PT08H30M15S')    // '08:30:15'
+parseSapFilterString(filters)  // SapFilter[] -> V2 $filter string
+parseArrayToFilter(['A','B'], 'Status')  // -> (Status eq 'A' or Status eq 'B')
 ```
 
-## OData query builder
+Read SAP messages without digging through the envelope:
 
 ```ts
-import { odataV2, odataV4, guid } from 'toch-lib';
+processSapSuccessMessages(response.headers)  // from the sap-message header
+processSapErrorMessages(httpError)           // from OData error details (skips tech wrapper)
+```
 
-// OData v4
-const url = odataV4<Product>('Products')
+## OData query builder (`toch-lib/odata`)
+
+One fluent API for both protocol versions — v2/v4 differences (`substringof` vs `contains`, `$inlinecount` vs `$count`, date/guid literals, `in` support) are handled per version:
+
+```ts
+import { odataV2, odataV4, guid } from 'toch-lib/odata';
+
+odataV4<Product>('Products')
   .select('Id', 'Name', 'Price')
-  .filter(f => f.and(f.eq('Category', 'Beverages'), f.gt('Price', 10)))
-  .expand('Supplier', e => e.select('CompanyName').top(3))
+  .filter(f => f.and(f.eq('Category', 'Beverages'), f.between('Price', 10, 100)))
+  .expand('Supplier', e => e.select('CompanyName'))
   .orderBy('Price', 'desc')
   .page(0, 20)
   .count()
   .toUrl('/odata/v4/catalog/');
 
-// SAP Gateway (OData v2) — same API, different output
-const v2 = odataV2('OrderSet')
-  .filter(f => f.contains('Customer', 'SAP'))   // -> substringof('SAP',Customer)
-  .filter(f => f.in('Status', ['A', 'B']))      // -> (Status eq 'A' or Status eq 'B')
+odataV2('OrderSet')
+  .filter(f => f.contains('Customer', 'SAP'))         // -> substringof('SAP',Customer)
   .byKey({ OrderId: '500001', Guid: guid('...') })
-  .param('sap-client', '100')
-  .format('json');
+  .param('sap-client', '100');
 ```
 
-Version differences (`contains` vs `substringof`, `$count` vs `$inlinecount`,
-`datetime'...'`/`guid'...'` literals, `in` support, per-expand options) are handled automatically.
+## Caching (`toch-lib/cache`)
 
-## Cache — decide what to save and when it stops
+You decide what to save and when it stops being valid:
 
 ```ts
-products$ = cache.wrap('products:all', this.http.get<Product[]>(url), {
-  ttlMs: 60_000,
-  tags: ['products'],
-});
+// transparent HTTP caching — enable via config: cache.interceptor
+// after a mutation, clear exactly what it affected:
+cache.invalidate(httpCacheKey(url));
+cache.invalidateWhere(/OrderSet/);
+cache.invalidateTag(HTTP_CACHE_TAG);      // all cached responses
 
-cache.validate('draft', o => o.userId === currentUser.id); // drops entry when rule fails
-cache.invalidate('products:all');
-cache.invalidateTag('products');
-cache.invalidateWhere(/^orders:/);
+// manual/service-level caching:
+cache.wrap('products', this.http.get<Product[]>(url), { ttlMs: 60_000, tags: ['products'] });
+cache.set('draft', order, { ttlMs: Infinity });
+cache.validate('draft', o => o.userId === user.id);   // entry removed when the rule fails
 ```
 
-## Auth, SSO & session
+## Auth (`toch-lib/auth`)
+
+Adapter pattern, exactly like the template — components inject `AuthService`, the data source is decided by providers:
 
 ```ts
-auth.setTokens({ accessToken: jwt });   // after login / code exchange
-auth.isAuthenticated$;                  // expiry-aware observable
-auth.hasRole('admin');
+// app.config.ts — dev
+...provideMockAuth<MyUser>({ displayName: 'ישראל ישראלי', personalNumber: '123456789' })
+// app.config.ts — prod: loads the user at startup from sso.userInfoUrl (with credentials)
+...provideSsoAuth()
 
-sso.ping().subscribe(ok => ok || sso.login());  // ticket SSO or OAuth2 redirect
-const { code } = sso.parseCallback();
-
-session.start();                                 // idle tracking + keep-alive
-session.expired$.subscribe(() => auth.logout());
+// anywhere
+export class TopBarComponent {
+  private readonly auth = inject(AuthService<MyUser>);
+  readonly user = this.auth.getCurrentUser();   // readonly Signal<MyUser>
+}
 ```
 
-Full documentation for every module: [projects/toch-lib/README.md](projects/toch-lib/README.md).
+A custom source (e.g. a non-SSO API) is one class implementing `AuthAdapter<TUser>` bound to `AUTH_PROVIDER`.
 
-## Repository layout
+For OAuth2/JWT token flows there is also `TokenAuthService` (token storage, expiry from the JWT `exp`, roles, `isAuthenticated$`) and `SsoService` (authorize-redirect + PKCE helpers, `parseCallback`).
 
+## Session (`toch-lib/session`)
+
+```ts
+session.start();                                  // idle tracking + optional keep-alive pings
+session.expired$.subscribe(() => /* logout, dialog, ... */);
+session.set('filters', f);  session.get<F>('filters');
+session.end();                                    // on logout
 ```
-projects/toch-lib/   library source (ng-packagr)
-dist/toch-lib/       build output (npm publish-ready)
+
+## Logger (`toch-lib/logger`)
+
+```ts
+...provideTochLogger('matomo')    // or 'console' (default), or your own LoggerAdapter class
+
+logger.log('order saved', order);
+logger.warn('slow response', ms);
+logger.error('save failed', err);
 ```
 
-## Development
+The Matomo adapter pushes entries as `trackEvent('app-log', level, message)` to the `_paq` queue (the Matomo snippet stays in the app's `index.html`) and mirrors to the console; it degrades to console-only when Matomo isn't loaded.
+
+## Overlay (`toch-lib/overlay`)
+
+Ref-counted fullscreen overlays — `LoadingService`/`SplashScreenService` in the app shrink to a portal factory:
+
+```ts
+import { BaseOverlayService } from 'toch-lib/overlay';   // needs @angular/cdk
+
+@Injectable({ providedIn: 'root' })
+export class LoadingService extends BaseOverlayService {
+  protected getComponentPortal() { return new ComponentPortal(SpinnerComponent); }
+}
+```
+
+## Base component (`toch-lib/core`)
+
+```ts
+export class MyComponent extends BaseComponent {
+  data$ = this.service.load().pipe(takeUntil(this.destroyed$));
+}
+```
+
+## Migrating a toch-template project
+
+| In the template | Replace with |
+| --- | --- |
+| `@toch/sap-utils` (vendored folder) | `toch-lib/sap` (same function names; `proccess*` → `process*Messages`) |
+| `base/base-api.service.ts` | `BaseApiService` from `toch-lib/http` (explicit verbs instead of `_request`) |
+| `base/base-sap-api.service.ts` | `BaseSapApiService` from `toch-lib/sap` |
+| `base/base.component.ts`, `base/utility.types.ts` | `toch-lib/core` |
+| `base/base-overlay.service.ts` | `toch-lib/overlay` |
+| `core/interceptors/cache.interceptor.ts` | config-gated interceptor from `toch-lib/cache` (adds TTL + invalidation) |
+| `core/services/auth/**` | `toch-lib/auth` (`provideMockAuth`/`provideSsoAuth`; mock user data stays in the app) |
+| `core/services/logger.service.ts` | `toch-lib/logger` |
+| `environment.api` usage in base services | `provideTochLib({ api: { baseUrl: environment.api } })` |
+
+Components, routes, feature adapters, styles, i18n and mock data stay in the project — the template keeps the scaffolding, the library keeps the logic.
+
+## Development (this repo)
 
 ```bash
 npm install
-npm run build     # builds with ng-packagr into dist/toch-lib
-npm run pack      # builds + creates an installable .tgz
+npm run build     # ng-packagr -> dist/toch-lib
+npm run pack      # build + installable .tgz
 ```
 
 ## License

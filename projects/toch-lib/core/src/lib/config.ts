@@ -23,6 +23,18 @@ export interface TochCsrfConfig {
   withCredentials?: boolean;
 }
 
+export interface TochApiConfig {
+  /** Base URL prepended by BaseApiService to relative paths, e.g. `/sap/opu/odata/sap`. */
+  baseUrl?: string;
+}
+
+export interface TochSapConfig {
+  /** Value sent as the `sap-language` query parameter on SAP requests. Default `he`. */
+  language?: string;
+  /** Extra query parameters added to every SAP request (e.g. `sap-client`). */
+  defaultParams?: Record<string, string>;
+}
+
 export interface TochAuthConfig {
   /** Where tokens are persisted. Default `session`. */
   storage?: StorageKind;
@@ -48,6 +60,11 @@ export interface TochSsoConfig {
   scopes?: string[];
   /** Extra query params appended to the authorize URL. */
   extraAuthorizeParams?: Record<string, string>;
+  /**
+   * Endpoint returning the current user's profile once the SSO session exists
+   * (fetched with credentials by `SsoAuthAdapter` at app startup).
+   */
+  userInfoUrl?: string;
 }
 
 export interface TochCacheConfig {
@@ -55,6 +72,16 @@ export interface TochCacheConfig {
   defaultTtlMs?: number;
   /** Max number of entries kept; oldest entries are evicted first. Default 200. */
   maxEntries?: number;
+  /**
+   * Enables the HTTP GET cache interceptor. Without this section the
+   * interceptor passes every request through untouched.
+   */
+  interceptor?: {
+    /** Only cache GETs whose URL starts with one of these prefixes. Empty/omitted = all GETs. */
+    urlPrefixes?: string[];
+    /** TTL for cached responses; falls back to `defaultTtlMs`. */
+    ttlMs?: number;
+  };
 }
 
 export interface TochSessionConfig {
@@ -71,6 +98,8 @@ export interface TochSessionConfig {
 }
 
 export interface TochLibConfig {
+  api?: TochApiConfig;
+  sap?: TochSapConfig;
   csrf?: TochCsrfConfig;
   auth?: TochAuthConfig;
   sso?: TochSsoConfig;

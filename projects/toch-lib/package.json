@@ -4,9 +4,15 @@
   "description": "Angular utilities for SAP backends: OData v2/v4 query builder, auth/SSO, caching, session handling and CSRF interceptor.",
   "keywords": ["angular", "sap", "odata", "csrf", "sso", "cache"],
   "peerDependencies": {
+    "@angular/cdk": ">=16.0.0 <21.0.0",
     "@angular/common": ">=16.0.0 <21.0.0",
     "@angular/core": ">=16.0.0 <21.0.0",
     "rxjs": "^7.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@angular/cdk": {
+      "optional": true
+    }
   },
   "dependencies": {
     "tslib": "^2.3.0"
