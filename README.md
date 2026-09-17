@@ -177,7 +177,7 @@ Adapter pattern, exactly like the template — components inject `AuthService`, 
 
 // anywhere
 export class TopBarComponent {
-  private readonly auth = inject(AuthService<MyUser>);
+  private readonly auth = inject<AuthService<MyUser>>(AuthService);
   readonly user = this.auth.getCurrentUser();   // readonly Signal<MyUser>
 }
 ```
