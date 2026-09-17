@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { catchError, map, Observable, of } from 'rxjs';
-import { TOCH_LIB_CONFIG } from '../config';
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
 
 export interface SsoCallbackResult {
   /** OAuth2 authorization code, when present in the callback URL. */

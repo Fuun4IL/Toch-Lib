@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { BehaviorSubject, map, Observable } from 'rxjs';
-import { TOCH_LIB_CONFIG } from '../config';
-import { KeyValueStore } from '../internal/key-value-store';
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
+import { KeyValueStore } from 'toch-lib/core';
 import { AuthState, AuthTokens, AuthUser, decodeJwt } from './auth.models';
 
 /**

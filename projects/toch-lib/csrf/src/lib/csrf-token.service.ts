@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient, HttpResponse } from '@angular/common/http';
 import { Observable, of, shareReplay, map, tap } from 'rxjs';
-import { TOCH_LIB_CONFIG } from '../config';
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
 
 /**
  * Fetches and caches the CSRF token using the SAP pattern:

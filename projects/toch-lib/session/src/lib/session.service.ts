@@ -1,8 +1,8 @@
 import { inject, Injectable, NgZone, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, catchError, Observable, of, Subject } from 'rxjs';
-import { TOCH_LIB_CONFIG } from '../config';
-import { KeyValueStore } from '../internal/key-value-store';
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
+import { KeyValueStore } from 'toch-lib/core';
 
 /**
  * Session state + persistence:

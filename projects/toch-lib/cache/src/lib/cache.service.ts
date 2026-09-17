@@ -1,6 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { defer, Observable, of, shareReplay, tap } from 'rxjs';
-import { TOCH_LIB_CONFIG } from '../config';
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
 
 export interface CacheSetOptions {
   /** Time-to-live in ms; falls back to the configured default (5 min). `Infinity` never expires. */

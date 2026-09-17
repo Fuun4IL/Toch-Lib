@@ -17,6 +17,18 @@ Works with **Angular 16 through 20** (built in partial-Ivy mode, peer range `>=1
 npm install toch-lib
 ```
 
+## Entry points
+
+Each area is its own entry point — import only what you use and the rest tree-shakes away:
+
+- `toch-lib/odata` — query builder (pure, no Angular services)
+- `toch-lib/auth` — `AuthService`, `SsoService`, JWT helpers
+- `toch-lib/cache` — `CacheService`
+- `toch-lib/session` — `SessionService`
+- `toch-lib/csrf` — interceptor + `CsrfTokenService`
+- `toch-lib/core` — `TOCH_LIB_CONFIG` token, config types, `KeyValueStore`
+- `toch-lib` — everything, plus `provideTochLib()`
+
 ## Setup
 
 Standalone bootstrap (or `providers` of your root NgModule):

@@ -1,5 +1,6 @@
-import { inject, Injectable, Injector } from '@angular/core';
+import { inject, Injectable, Injector, Provider } from '@angular/core';
 import {
+  HTTP_INTERCEPTORS,
   HttpErrorResponse,
   HttpEvent,
   HttpHandler,
@@ -9,7 +10,7 @@ import {
   HttpRequest,
 } from '@angular/common/http';
 import { catchError, Observable, switchMap, throwError } from 'rxjs';
-import { TochCsrfConfig, TOCH_LIB_CONFIG } from '../config';
+import { TochCsrfConfig, TOCH_LIB_CONFIG } from 'toch-lib/core';
 import { CsrfTokenService } from './csrf-token.service';
 
 const DEFAULT_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE', 'MERGE'];
@@ -81,4 +82,13 @@ export class CsrfInterceptor implements HttpInterceptor {
     const config = this.injector.get(TOCH_LIB_CONFIG, {})?.csrf ?? {};
     return handleWithToken(req, (r) => next.handle(r), tokens, config);
   }
+}
+
+/**
+ * Registers only the CSRF interceptor (DI-based). Use this when you import
+ * from `toch-lib/csrf` directly instead of using `provideTochLib`:
+ * configure via `{ provide: TOCH_LIB_CONFIG, useValue: { csrf: {...} } }`.
+ */
+export function provideTochCsrfInterceptor(): Provider[] {
+  return [{ provide: HTTP_INTERCEPTORS, useClass: CsrfInterceptor, multi: true }];
 }

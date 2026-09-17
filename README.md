@@ -32,6 +32,37 @@ bootstrapApplication(AppComponent, {
 
 NgModule apps: put `provideTochLib(...)` in the root module's `providers` instead.
 
+## Entry points — take only what you need
+
+Every area ships as its own entry point, so unused parts tree-shake away completely:
+
+| Import from | Contents |
+| --- | --- |
+| `toch-lib/odata` | OData v2/v4 query builder (no Angular services, pure) |
+| `toch-lib/auth` | `AuthService`, `SsoService`, JWT helpers |
+| `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) |
+| `toch-lib/session` | `SessionService` (idle timeout, keep-alive) |
+| `toch-lib/csrf` | CSRF interceptor + `CsrfTokenService` |
+| `toch-lib/core` | `TOCH_LIB_CONFIG` token, config types, storage helper |
+| `toch-lib` | everything above + `provideTochLib()` |
+
+```ts
+import { odataV4 } from 'toch-lib/odata';   // pulls in only the query builder
+import { CacheService } from 'toch-lib/cache';
+```
+
+When you skip `provideTochLib`, configure via the token from core:
+
+```ts
+import { TOCH_LIB_CONFIG } from 'toch-lib/core';
+import { provideTochCsrfInterceptor } from 'toch-lib/csrf';
+
+providers: [
+  { provide: TOCH_LIB_CONFIG, useValue: { csrf: { fetchUrl: '/sap/opu/odata/sap/MY_SRV/' } } },
+  provideTochCsrfInterceptor(),
+]
+```
+
 ## OData query builder
 
 ```ts

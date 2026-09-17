@@ -1,6 +1,4 @@
-import { InjectionToken, Provider } from '@angular/core';
-import { HTTP_INTERCEPTORS } from '@angular/common/http';
-import { CsrfInterceptor } from './csrf/csrf.interceptor';
+import { InjectionToken } from '@angular/core';
 
 /** Where auth/session values are persisted. */
 export type StorageKind = 'memory' | 'session' | 'local';
@@ -84,26 +82,3 @@ export const TOCH_LIB_CONFIG = new InjectionToken<TochLibConfig>('TOCH_LIB_CONFI
   providedIn: 'root',
   factory: () => ({}),
 });
-
-/**
- * Registers the library configuration and the CSRF interceptor.
- *
- * Standalone apps (Angular 16–20):
- * ```ts
- * bootstrapApplication(AppComponent, {
- *   providers: [
- *     provideHttpClient(withInterceptorsFromDi()),
- *     provideTochLib({ csrf: { fetchUrl: '/sap/opu/odata/sap/MY_SRV/' } }),
- *   ],
- * });
- * ```
- *
- * NgModule apps: add `provideTochLib(...)` to the root module's `providers`
- * (HttpClientModule picks up the DI-based interceptor automatically).
- */
-export function provideTochLib(config: TochLibConfig = {}): Provider[] {
-  return [
-    { provide: TOCH_LIB_CONFIG, useValue: config },
-    { provide: HTTP_INTERCEPTORS, useClass: CsrfInterceptor, multi: true },
-  ];
-}

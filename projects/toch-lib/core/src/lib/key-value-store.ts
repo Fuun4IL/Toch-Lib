@@ -1,4 +1,4 @@
-import { StorageKind } from '../config';
+import { StorageKind } from './config';
 
 /**
  * JSON key-value store over memory / sessionStorage / localStorage.
