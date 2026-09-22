@@ -20,8 +20,8 @@ import { provideTochCacheInterceptor } from 'toch-lib/cache';
  * (HttpClientModule picks up the DI-based interceptor automatically).
  *
  * Using only parts of the library? Import from the sub-entry points
- * (`toch-lib/odata`, `toch-lib/auth`, `toch-lib/cache`, `toch-lib/session`,
- * `toch-lib/csrf`, `toch-lib/core`) and provide `TOCH_LIB_CONFIG` yourself.
+ * (`toch-lib/odata`, `toch-lib/auth`, `toch-lib/cache`, `toch-lib/csrf`,
+ * `toch-lib/core`) and provide `TOCH_LIB_CONFIG` yourself.
  */
 export function provideTochLib(config: TochLibConfig = {}): Provider[] {
   return [

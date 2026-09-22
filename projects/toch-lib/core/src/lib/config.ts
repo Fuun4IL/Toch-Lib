@@ -1,8 +1,5 @@
 import { InjectionToken } from '@angular/core';
 
-/** Where auth/session values are persisted. */
-export type StorageKind = 'memory' | 'session' | 'local';
-
 export interface TochCsrfConfig {
   /**
    * URL used to fetch a CSRF token with the SAP `X-CSRF-Token: Fetch` pattern.
@@ -21,27 +18,6 @@ export interface TochCsrfConfig {
   methods?: string[];
   /** Send credentials (cookies) with the token fetch. Default true (needed for SAP session cookies). */
   withCredentials?: boolean;
-}
-
-export interface TochApiConfig {
-  /** Base URL prepended by BaseApiService to relative paths, e.g. `/sap/opu/odata/sap`. */
-  baseUrl?: string;
-}
-
-export interface TochSapConfig {
-  /** Value sent as the `sap-language` query parameter on SAP requests. Default `he`. */
-  language?: string;
-  /** Extra query parameters added to every SAP request (e.g. `sap-client`). */
-  defaultParams?: Record<string, string>;
-}
-
-export interface TochAuthConfig {
-  /** Where tokens are persisted. Default `session`. */
-  storage?: StorageKind;
-  /** Storage key prefix. Default `toch.auth`. */
-  storageKeyPrefix?: string;
-  /** Seconds before actual expiry at which the token is considered expired. Default 30. */
-  expiryLeewaySeconds?: number;
 }
 
 export interface TochSsoConfig {
@@ -84,27 +60,10 @@ export interface TochCacheConfig {
   };
 }
 
-export interface TochSessionConfig {
-  /** Where session values are persisted. Default `session`. */
-  storage?: StorageKind;
-  /** Storage key prefix. Default `toch.session`. */
-  storageKeyPrefix?: string;
-  /** Idle time in ms after which the session is considered expired. Default 30 minutes. 0 disables. */
-  idleTimeoutMs?: number;
-  /** URL called periodically to keep the backend session alive. */
-  keepAliveUrl?: string;
-  /** Keep-alive interval in ms. Default 5 minutes. */
-  keepAliveIntervalMs?: number;
-}
-
 export interface TochLibConfig {
-  api?: TochApiConfig;
-  sap?: TochSapConfig;
   csrf?: TochCsrfConfig;
-  auth?: TochAuthConfig;
   sso?: TochSsoConfig;
   cache?: TochCacheConfig;
-  session?: TochSessionConfig;
 }
 
 export const TOCH_LIB_CONFIG = new InjectionToken<TochLibConfig>('TOCH_LIB_CONFIG', {
