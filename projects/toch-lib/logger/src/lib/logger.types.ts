@@ -7,23 +7,12 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /**
- * When a `@Log()` entry is produced, relative to the decorated method's
- * execution:
- *
- * - `call` — the method was invoked. Fires synchronously, before the
- *   original method runs, for every return type.
- * - `success` — the method (or the Promise/Observable it returned)
- *   completed without error.
- * - `failure` — the method (or the Promise/Observable it returned) threw,
- *   rejected, or errored.
- * - `always` — logged once on completion regardless of outcome: `success`
- *   for a clean finish, `failure` for an error. Never logs twice for the
- *   same completion.
- *
- * `on` accepts one trigger or several (`on: ['call', 'failure']`); each
- * requested trigger that actually occurs produces its own entry.
+ * Which phase of the decorated method's execution produced a given
+ * {@link LogEntry}. Not configurable — every `@Log()`-decorated call always
+ * produces a `call` entry at invocation and exactly one completion entry
+ * (`success` or `failure`) once it finishes.
  */
-export type LogTrigger = 'call' | 'success' | 'failure' | 'always';
+export type LogTrigger = 'call' | 'success' | 'failure';
 
 /**
  * A structured log entry, the only thing a {@link Logger} ever receives.
@@ -34,13 +23,12 @@ export interface LogEntry {
   level: LogLevel;
   /** Which {@link LogTrigger} produced this entry. */
   trigger: LogTrigger;
-  /** The configured message, or the method name when none was given. */
   message: string;
   /** ISO-8601 timestamp, e.g. `2026-09-22T10:32:19.083Z`. */
   timestamp: string;
   className?: string;
   methodName?: string;
-  /** Present on `success`/`failure`/`always` entries when `includeDuration` is set. Milliseconds. */
+  /** Present on `success`/`failure` entries when `includeDuration` is set. Milliseconds. */
   duration?: number;
   /**
    * The call arguments — only present when the decorator opts in via
@@ -69,30 +57,31 @@ export interface Logger {
 }
 
 /**
- * Configuration for the `@Log()` decorator. All fields are optional;
- * defaults are documented on each one and enforced by `normalizeLogOptions`.
+ * Configuration for the `@Log()` decorator. `level` and `message` are the
+ * only two fields you must decide on — everything else is optional and
+ * defaults to "off".
+ *
+ * There is no trigger to pick: every decorated call always logs once at
+ * invocation and exactly once on completion (`success` or `failure`,
+ * whichever actually happens) — see `LogEntry.trigger`.
  */
 export interface LogOptions {
   /**
-   * Severity used for `call`/`success` entries this decorator produces
-   * (and for `failure`/`always` entries too, unless `warnIfDurationExceeds`
-   * escalates one — see there). Default `'info'`.
+   * Severity for every entry this decorator produces — the call entry, and
+   * whichever completion entry (`success`/`failure`) actually happens
+   * (unless `warnIfDurationExceeds` escalates it — see there).
    *
    * This only selects which `Logger` method is called — it has no effect
-   * on whether the decorated method actually fails. A `failure` trigger
-   * with `level: 'warn'` is valid: log severity and execution outcome are
-   * separate axes.
+   * on whether the decorated method actually fails. `level: 'warn'` on a
+   * decorator whose method later throws is valid: log severity and
+   * execution outcome are separate axes.
    */
-  level?: LogLevel;
-  /** Message to log. Defaults to the decorated method's name. */
-  message?: string;
-  /** One or more triggers to log on. Default `'call'`. */
-  on?: LogTrigger | LogTrigger[];
+  level: LogLevel;
+  /** Message to log, on both the call entry and its completion entry. */
+  message: string;
   /**
-   * Measure and attach execution duration (ms) to `success`/`failure`/
-   * `always` entries. Meaningless for a `call`-only decorator (nothing has
-   * executed yet), so it is silently ignored unless `on` also includes
-   * `success`, `failure`, or `always`. Default `false`.
+   * Measure and attach execution duration (ms) to the completion entry.
+   * Default `false`.
    *
    * For an Observable-returning method, duration is measured **per
    * subscription** — from the moment something subscribes to the returned
@@ -110,7 +99,7 @@ export interface LogOptions {
    */
   warnIfDurationExceeds?: number;
   /**
-   * Include the raw call arguments on `call` entries. Off by default —
+   * Include the raw call arguments on the call entry. Off by default —
    * arguments often carry request bodies, credentials, or other data that
    * should not land in logs unreviewed. Turn this on only for methods you
    * know take safe, non-sensitive arguments.

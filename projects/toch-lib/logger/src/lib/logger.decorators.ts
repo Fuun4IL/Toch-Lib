@@ -3,12 +3,10 @@ import { getLogger } from './logger.bridge';
 import { LogEntry, LogLevel, LogOptions, LogTrigger, Logger } from './logger.types';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
-const TRIGGERS: readonly LogTrigger[] = ['call', 'success', 'failure', 'always'];
 
 interface NormalizedLogOptions {
   level: LogLevel;
-  message?: string;
-  on: LogTrigger[];
+  message: string;
   includeDuration: boolean;
   warnIfDurationExceeds?: number;
   includeArgs: boolean;
@@ -16,21 +14,16 @@ interface NormalizedLogOptions {
   logger?: Logger;
 }
 
-/** Validates and fills in defaults. Throws at decoration time on unsupported values. */
-function normalizeLogOptions(options: LogOptions): NormalizedLogOptions {
+/**
+ * Validates and fills in defaults. `level`/`message` are required by the
+ * `LogOptions` type, but this also enforces it at runtime (for plain-JS
+ * callers, or the deprecated aliases below) and throws at decoration time
+ * on any unsupported value rather than silently no-op'ing.
+ */
+function normalizeLogOptions(options: LogOptions, fallbackMessage: () => string): NormalizedLogOptions {
   const level = options.level ?? 'info';
   if (!LEVELS.includes(level)) {
     throw new Error(`@Log: unsupported level "${level}". Expected one of ${LEVELS.join(', ')}.`);
-  }
-  const onRaw = options.on ?? 'call';
-  const on = Array.isArray(onRaw) ? onRaw : [onRaw];
-  if (on.length === 0) {
-    throw new Error('@Log: "on" must name at least one trigger.');
-  }
-  for (const trigger of on) {
-    if (!TRIGGERS.includes(trigger)) {
-      throw new Error(`@Log: unsupported trigger "${trigger}". Expected one of ${TRIGGERS.join(', ')}.`);
-    }
   }
   if (
     options.warnIfDurationExceeds !== undefined &&
@@ -40,8 +33,7 @@ function normalizeLogOptions(options: LogOptions): NormalizedLogOptions {
   }
   return {
     level,
-    message: options.message,
-    on,
+    message: options.message || fallbackMessage(),
     includeDuration: options.includeDuration ?? false,
     warnIfDurationExceeds: options.warnIfDurationExceeds,
     includeArgs: options.includeArgs ?? false,
@@ -79,43 +71,48 @@ function write(logger: Logger, level: LogLevel, entry: LogEntry): void {
 type DecoratedMethod = (this: unknown, ...args: unknown[]) => unknown;
 
 /**
- * Unified logging decorator — see `LogOptions` for every field.
+ * Unified logging decorator — see `LogOptions` for every field. `level` and
+ * `message` are the only two things you decide on; everything else is
+ * optional.
  *
  * ```ts
- * @Log({ level: 'info', message: 'Fetching orders', on: 'call' })
+ * @Log({ level: 'info', message: 'Fetching orders' })
  * getOrders() { return this.api.get<Order[]>('OrderSet'); }
  *
- * @Log({ level: 'error', message: 'Save failed', on: 'failure' })
+ * @Log({ level: 'error', message: 'Save failed', includeDuration: true })
  * saveOrder(order: Order) { return this.api.post('OrderSet', order); }
  * ```
  *
- * A bare string is shorthand for `{ message }` (level `'info'`, `on: 'call'`):
+ * A bare string is shorthand for `{ level: 'info', message }`:
  * `@Log('Fetching orders')`.
+ *
+ * There is no trigger to configure — every call always logs once at
+ * invocation and exactly once on completion (`success` or `failure`,
+ * whichever actually happens; see `LogEntry.trigger`).
  *
  * Works on synchronous methods, Promise-returning methods, and
  * Observable-returning methods — detected at call time from the actual
- * return value, not from static typing. The original return value/behavior
- * is preserved: synchronous results pass through untouched, and when no
- * duration/completion logging is configured, Promises and Observables are
- * returned exactly as produced (no wrapping, no extra subscription).
+ * return value, not from static typing. Return values/errors pass through
+ * unchanged: synchronous results are returned as-is, Promises resolve/
+ * reject with the original value/reason, and Observables preserve cold
+ * semantics (nothing is subscribed to on your behalf; duration, when
+ * enabled, is measured per subscription).
  */
-export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator {
-  const options = normalizeLogOptions(
-    typeof optionsOrMessage === 'string' ? { message: optionsOrMessage } : optionsOrMessage
-  );
+export function Log(optionsOrMessage: string | LogOptions): MethodDecorator {
+  const rawOptions: LogOptions =
+    typeof optionsOrMessage === 'string' ? { level: 'info', message: optionsOrMessage } : optionsOrMessage;
 
   return function (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) {
     const original = descriptor.value as DecoratedMethod;
     const className = (target as { constructor?: { name?: string } })?.constructor?.name;
     const methodName = String(propertyKey);
-    const message = options.message ?? methodName;
-    const needsCompletion = options.on.some((t) => t !== 'call');
+    const options = normalizeLogOptions(rawOptions, () => methodName);
 
     function build(trigger: LogTrigger, extra: Partial<LogEntry> = {}): LogEntry {
       return {
         level: options.level,
         trigger,
-        message,
+        message: options.message,
         timestamp: new Date().toISOString(),
         className,
         methodName,
@@ -127,13 +124,10 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
       logger: Logger,
       trigger: 'success' | 'failure',
       args: unknown[],
-      startedAt: number | undefined,
+      startedAt: number,
       err?: unknown
     ): void {
-      if (!options.on.includes(trigger) && !options.on.includes('always')) return;
-
-      const duration =
-        options.includeDuration && startedAt !== undefined ? now() - startedAt : undefined;
+      const duration = options.includeDuration ? now() - startedAt : undefined;
       let level = options.level;
       const metadata = resolveMetadata(options.metadata, args) ?? {};
       if (
@@ -161,18 +155,16 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
     descriptor.value = function (this: unknown, ...args: unknown[]) {
       const logger = options.logger ?? getLogger();
 
-      if (options.on.includes('call')) {
-        write(
-          logger,
-          options.level,
-          build('call', {
-            args: options.includeArgs ? args : undefined,
-            metadata: resolveMetadata(options.metadata, args),
-          })
-        );
-      }
+      write(
+        logger,
+        options.level,
+        build('call', {
+          args: options.includeArgs ? args : undefined,
+          metadata: resolveMetadata(options.metadata, args),
+        })
+      );
 
-      const startedAt = needsCompletion ? now() : undefined;
+      const startedAt = now();
 
       let result: unknown;
       try {
@@ -184,7 +176,6 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
 
       if (result instanceof Observable) {
         const source = result; // `const` so the narrowed type survives into the closure below
-        if (!needsCompletion) return source;
         return new Observable((subscriber) => {
           const subscriptionStart = now();
           const subscription = source.subscribe({
@@ -203,7 +194,6 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
       }
 
       if (result instanceof Promise) {
-        if (!needsCompletion) return result;
         return result.then(
           (value) => {
             emitCompletion(logger, 'success', args, startedAt);
@@ -216,7 +206,7 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
         );
       }
 
-      if (needsCompletion) emitCompletion(logger, 'success', args, startedAt);
+      emitCompletion(logger, 'success', args, startedAt);
       return result;
     };
 
@@ -226,22 +216,22 @@ export function Log(optionsOrMessage: string | LogOptions = {}): MethodDecorator
 
 // ---------------------------------------------------------------------------
 // Deprecated aliases — thin wrappers over Log(), kept for methods already
-// decorated with @log/@warn/@error. Behavior is unchanged: @log/@warn fire
-// on every call; @error fires (and rethrows/re-emits) only on failure.
-// Prefer @Log(...) directly in new code.
+// decorated with @log/@warn/@error. They now also log a completion entry
+// (previously @log/@warn logged on call only, and @error on failure only) —
+// Log() no longer supports picking a trigger. Prefer @Log(...) directly.
 // ---------------------------------------------------------------------------
 
-/** @deprecated Use `@Log({ level: 'info', message, on: 'call' })` instead. */
+/** @deprecated Use `@Log({ level: 'info', message })` instead. */
 export function log(label?: string): MethodDecorator {
-  return Log({ level: 'info', message: label, on: 'call' });
+  return Log({ level: 'info', message: label ?? '' });
 }
 
-/** @deprecated Use `@Log({ level: 'warn', message, on: 'call' })` instead. */
+/** @deprecated Use `@Log({ level: 'warn', message })` instead. */
 export function warn(label?: string): MethodDecorator {
-  return Log({ level: 'warn', message: label, on: 'call' });
+  return Log({ level: 'warn', message: label ?? '' });
 }
 
-/** @deprecated Use `@Log({ level: 'error', message, on: 'failure' })` instead. */
+/** @deprecated Use `@Log({ level: 'error', message })` instead. */
 export function error(label?: string): MethodDecorator {
-  return Log({ level: 'error', message: label, on: 'failure' });
+  return Log({ level: 'error', message: label ?? '' });
 }

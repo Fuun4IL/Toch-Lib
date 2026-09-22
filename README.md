@@ -139,37 +139,35 @@ import { Log } from 'toch-lib/logger';
 
 @Injectable()
 export class OrdersService {
-  @Log({ level: 'info', message: 'Fetching orders', on: 'call' })
+  @Log({ level: 'info', message: 'Fetching orders' })
   getOrders() { return this.api.get<Order[]>('OrderSet'); }
 
-  @Log({ level: 'error', message: 'Save failed', on: 'failure' })
+  @Log({ level: 'error', message: 'Saving order', includeDuration: true, warnIfDurationExceeds: 1000 })
   saveOrder(order: Order) { return this.api.post<Order>('OrderSet', order); }
-
-  @Log({ level: 'info', message: 'Sync', on: 'always', includeDuration: true, warnIfDurationExceeds: 1000 })
-  syncCatalog() { return this.api.get<Catalog>('CatalogSet'); }
 }
 ```
 
-A bare string is shorthand for `{ message }` (level `'info'`, `on: 'call'`): `@Log('Fetching orders')`.
+`level` and `message` are the only two things you decide on — there's no trigger to configure. Every decorated call always logs once at invocation and exactly once on completion, whichever actually happens (`LogEntry.trigger` tells you which: `'call'`, `'success'`, or `'failure'`).
+
+A bare string is shorthand for `{ level: 'info', message }`: `@Log('Fetching orders')`.
 
 **`LogOptions`:**
 
-| Field | Default | Meaning |
+| Field | Required? | Meaning |
 | --- | --- | --- |
-| `level` | `'info'` | `'debug' \| 'info' \| 'warn' \| 'error'` — which `Logger` method this decorator's entries go to. Independent of `on`: a `failure` trigger can log at `'warn'` if that's the right severity for you: severity and execution outcome are separate axes. |
-| `message` | the method name | The text logged. |
-| `on` | `'call'` | One or more of `'call'` (fires at invocation, before the method runs), `'success'` (completed without error), `'failure'` (threw/rejected/errored), `'always'` (logs exactly one completion entry either way). Pass an array (`on: ['call', 'failure']`) to log on more than one trigger. |
-| `includeDuration` | `false` | Attaches elapsed ms to `success`/`failure`/`always` entries. Ignored for a `call`-only decorator (nothing has run yet). For an Observable, duration is measured **per subscription** — from subscribe to complete/error, never from when the method was called — and nothing is subscribed to on your behalf. |
-| `warnIfDurationExceeds` | — | When a completion entry's duration exceeds this (ms), its level is escalated to at least `'warn'` (an `'error'` entry is never downgraded). No second entry is added — the one completion log just gets louder. |
-| `includeArgs` | `false` | Attach the raw call arguments to `call` entries. Off by default: arguments often carry request bodies or credentials that shouldn't land in logs unreviewed. |
-| `metadata` | — | Extra structured context: a static object, or `({ args }) => object`. |
-| `logger` | the configured logger | Override the backend for this one decorator (mainly for tests). |
+| `level` | **required** | `'debug' \| 'info' \| 'warn' \| 'error'` — which `Logger` method every entry this decorator produces goes to (both the call entry and its completion entry). This only picks a severity — it has no effect on whether the method actually fails; log severity and execution outcome are separate axes. |
+| `message` | **required** | The text logged, on both the call entry and its completion entry. |
+| `includeDuration` | optional, default `false` | Attaches elapsed ms to the completion entry. For an Observable, duration is measured **per subscription** — from subscribe to complete/error, never from when the method was called — and nothing is subscribed to on your behalf. |
+| `warnIfDurationExceeds` | optional | When the completion entry's duration exceeds this (ms), its level is escalated to at least `'warn'` (an `'error'` entry is never downgraded). No second entry is added — the one completion log just gets louder. |
+| `includeArgs` | optional, default `false` | Attach the raw call arguments to the call entry. Off by default: arguments often carry request bodies or credentials that shouldn't land in logs unreviewed. |
+| `metadata` | optional | Extra structured context: a static object, or `({ args }) => object`. |
+| `logger` | optional | Override the backend for this one decorator (mainly for tests). |
 
 Return-type handling is automatic and detected at call time (`instanceof Promise` / `instanceof Observable`), not from static typing — the same `@Log(...)` works unmodified on synchronous, Promise-returning, and Observable-returning methods:
 
-- **Synchronous** — the return value passes through untouched; a thrown error is logged (if `on` includes `failure`/`always`) and rethrown.
-- **Promise** — resolves/rejects with the exact original value/reason; when nothing needs to log on completion (`on: 'call'` only), the original Promise is returned unwrapped.
-- **Observable** — cold semantics are preserved: nothing is subscribed to on your behalf, each subscriber gets its own duration measurement, unsubscribing tears down the source subscription, and when `on: 'call'` is the only trigger the original Observable reference is returned with no wrapping at all.
+- **Synchronous** — the return value passes through untouched; a thrown error is logged and rethrown.
+- **Promise** — resolves/rejects with the exact original value/reason (a new Promise wrapping the original, so completion can be logged).
+- **Observable** — cold semantics are preserved: nothing is subscribed to on your behalf, each subscriber gets its own duration measurement and its own completion log entry, and unsubscribing tears down the source subscription.
 
 Pick the log backend once, at app startup:
 
@@ -184,10 +182,12 @@ The Matomo backend pushes entries as `trackEvent('app-log', 'trigger:level', mes
 The single-purpose decorators from the previous iteration of this library still work, implemented as thin wrappers over `@Log()`:
 
 ```ts
-@log('fetching orders')     // same as @Log({ level: 'info',  message: 'fetching orders', on: 'call' })
-@warn('legacy endpoint')    // same as @Log({ level: 'warn',  message: 'legacy endpoint',  on: 'call' })
-@error('save failed')       // same as @Log({ level: 'error', message: 'save failed',      on: 'failure' })
+@log('fetching orders')     // same as @Log({ level: 'info',  message: 'fetching orders' })
+@warn('legacy endpoint')    // same as @Log({ level: 'warn',  message: 'legacy endpoint' })
+@error('save failed')       // same as @Log({ level: 'error', message: 'save failed' })
 ```
+
+**Behavior change from the previous release:** `@Log()` no longer supports picking a trigger, so these aliases now log a completion entry too, at the same level as the call entry. `@log`/`@warn` previously logged only on call, and `@error` only logged (at `'error'`) when the method actually failed — now all three log **every** entry they produce (call, and whichever of success/failure happens) at their one configured level. In practice this means `@error('x')` will call `logger.error(...)` even for successful calls, not just failing ones. If you relied on `@error` staying silent on success, switch to `@Log({ level: 'error', message: 'x' })` and filter/ignore the `'success'`-trigger entries in your `Logger`, or migrate to a `Logger` that only escalates on `entry.trigger === 'failure'`.
 
 They're marked `@deprecated` and kept only for code already using them — write new code against `@Log(...)` directly.
 

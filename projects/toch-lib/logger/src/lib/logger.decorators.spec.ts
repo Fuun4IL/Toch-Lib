@@ -11,11 +11,11 @@ function createRecordingLogger(): Logger & { entries: LogEntry[] } {
 }
 
 describe('@Log — synchronous methods', () => {
-  it('preserves the return value and logs on call by default', () => {
+  it('preserves the return value and logs a call entry then a success entry', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ message: 'calculating total', logger })
+      @Log({ level: 'info', message: 'calculating total', logger })
       calculateTotal(a: number, b: number) {
         return a + b;
       }
@@ -24,7 +24,7 @@ describe('@Log — synchronous methods', () => {
     const result = new Calc().calculateTotal(2, 3);
 
     expect(result).toBe(5);
-    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries).toHaveLength(2);
     expect(logger.entries[0]).toMatchObject({
       level: 'info',
       trigger: 'call',
@@ -32,6 +32,7 @@ describe('@Log — synchronous methods', () => {
       className: 'Calc',
       methodName: 'calculateTotal',
     });
+    expect(logger.entries[1]).toMatchObject({ trigger: 'success', message: 'calculating total' });
     expect(typeof logger.entries[0].timestamp).toBe('string');
   });
 
@@ -39,7 +40,7 @@ describe('@Log — synchronous methods', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ logger })
+      @Log({ level: 'info', message: '', logger })
       calculateTotal() {
         return 0;
       }
@@ -48,9 +49,10 @@ describe('@Log — synchronous methods', () => {
     new Calc().calculateTotal();
 
     expect(logger.entries[0].message).toBe('calculateTotal');
+    expect(logger.entries[1].message).toBe('calculateTotal');
   });
 
-  it('accepts a bare string as shorthand for { message }', () => {
+  it('accepts a bare string as shorthand for { level: "info", message }', () => {
     // The shorthand form has no `logger` field to override, so redirect the
     // global bridge (what it falls back to) for the duration of this test.
     const logger = createRecordingLogger();
@@ -65,8 +67,9 @@ describe('@Log — synchronous methods', () => {
 
     new Calc().calculateTotal();
 
-    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries).toHaveLength(2);
     expect(logger.entries[0]).toMatchObject({ level: 'info', trigger: 'call', message: 'shorthand message' });
+    expect(logger.entries[1]).toMatchObject({ level: 'info', trigger: 'success', message: 'shorthand message' });
   });
 
   it('logs a failure entry and rethrows synchronous exceptions unchanged', () => {
@@ -74,36 +77,23 @@ describe('@Log — synchronous methods', () => {
     const boom = new Error('boom');
 
     class Calc {
-      @Log({ message: 'calculating total', on: 'failure', logger })
+      @Log({ level: 'error', message: 'calculating total', logger })
       calculateTotal(): number {
         throw boom;
       }
     }
 
     expect(() => new Calc().calculateTotal()).toThrow(boom);
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0]).toMatchObject({ trigger: 'failure', error: boom });
-  });
-
-  it('does not log a failure entry when on: "success" and the call throws', () => {
-    const logger = createRecordingLogger();
-
-    class Calc {
-      @Log({ on: 'success', logger })
-      calculateTotal(): number {
-        throw new Error('boom');
-      }
-    }
-
-    expect(() => new Calc().calculateTotal()).toThrow('boom');
-    expect(logger.entries).toHaveLength(0);
+    expect(logger.entries).toHaveLength(2);
+    expect(logger.entries[0].trigger).toBe('call');
+    expect(logger.entries[1]).toMatchObject({ trigger: 'failure', error: boom });
   });
 
   it('does not include call arguments unless includeArgs is set', () => {
     const logger = createRecordingLogger();
 
     class Auth {
-      @Log({ logger })
+      @Log({ level: 'info', message: 'login', logger })
       login(_username: string, _password: string) {
         return true;
       }
@@ -118,7 +108,7 @@ describe('@Log — synchronous methods', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ includeArgs: true, logger })
+      @Log({ level: 'info', message: 'calc', includeArgs: true, logger })
       calculateTotal(a: number, b: number) {
         return a + b;
       }
@@ -133,12 +123,12 @@ describe('@Log — synchronous methods', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ metadata: { source: 'calc' }, logger })
+      @Log({ level: 'info', message: 'static', metadata: { source: 'calc' }, logger })
       staticMeta() {
         return 0;
       }
 
-      @Log({ metadata: ({ args }) => ({ firstArg: args[0] }), logger })
+      @Log({ level: 'info', message: 'dynamic', metadata: ({ args }) => ({ firstArg: args[0] }), logger })
       dynamicMeta(a: number) {
         return a;
       }
@@ -148,8 +138,8 @@ describe('@Log — synchronous methods', () => {
     calc.staticMeta();
     calc.dynamicMeta(42);
 
-    expect(logger.entries[0].metadata).toEqual({ source: 'calc' });
-    expect(logger.entries[1].metadata).toEqual({ firstArg: 42 });
+    expect(logger.entries[0].metadata).toEqual({ source: 'calc' }); // staticMeta call entry
+    expect(logger.entries[2].metadata).toEqual({ firstArg: 42 }); // dynamicMeta call entry
   });
 });
 
@@ -158,7 +148,7 @@ describe('@Log — Promise-returning methods', () => {
     const logger = createRecordingLogger();
 
     class Orders {
-      @Log({ on: 'success', includeDuration: true, logger })
+      @Log({ level: 'info', message: 'save', includeDuration: true, logger })
       async saveOrder(order: { id: number }) {
         return order;
       }
@@ -167,9 +157,9 @@ describe('@Log — Promise-returning methods', () => {
     const result = await new Orders().saveOrder({ id: 1 });
 
     expect(result).toEqual({ id: 1 });
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0]).toMatchObject({ trigger: 'success' });
-    expect(typeof logger.entries[0].duration).toBe('number');
+    expect(logger.entries).toHaveLength(2);
+    expect(logger.entries[1]).toMatchObject({ trigger: 'success' });
+    expect(typeof logger.entries[1].duration).toBe('number');
   });
 
   it('logs failure and preserves the original rejection reason', async () => {
@@ -177,22 +167,22 @@ describe('@Log — Promise-returning methods', () => {
     const reason = new Error('save failed');
 
     class Orders {
-      @Log({ level: 'error', on: 'failure', logger })
+      @Log({ level: 'error', message: 'save', logger })
       async saveOrder(): Promise<void> {
         throw reason;
       }
     }
 
     await expect(new Orders().saveOrder()).rejects.toBe(reason);
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0]).toMatchObject({ trigger: 'failure', error: reason, level: 'error' });
+    expect(logger.entries).toHaveLength(2);
+    expect(logger.entries[1]).toMatchObject({ trigger: 'failure', error: reason, level: 'error' });
   });
 
-  it('does not wrap the Promise when only "call" is configured', () => {
+  it('resolves/rejects with the exact original value/reason (a new Promise wrapper, same result)', () => {
     const logger = createRecordingLogger();
 
     class Orders {
-      @Log({ on: 'call', logger })
+      @Log({ level: 'info', message: 'save', logger })
       async saveOrder() {
         return 'ok';
       }
@@ -218,7 +208,7 @@ describe('@Log — Observable-returning methods', () => {
     const subscribeCounter = { count: 0 };
 
     class OrdersApi {
-      @Log({ on: 'success', logger })
+      @Log({ level: 'info', message: 'get orders', logger })
       getOrders() {
         return coldObservable([1, 2, 3], subscribeCounter);
       }
@@ -233,8 +223,9 @@ describe('@Log — Observable-returning methods', () => {
 
     expect(received).toEqual([1, 2, 3]);
     expect(completed).toBe(true);
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0].trigger).toBe('success');
+    expect(logger.entries).toHaveLength(2);
+    expect(logger.entries[0].trigger).toBe('call');
+    expect(logger.entries[1].trigger).toBe('success');
   });
 
   it('logs the error and re-emits it to the subscriber', () => {
@@ -242,7 +233,7 @@ describe('@Log — Observable-returning methods', () => {
     const failure = new Error('network down');
 
     class OrdersApi {
-      @Log({ level: 'error', on: 'failure', logger })
+      @Log({ level: 'error', message: 'get orders', logger })
       getOrders() {
         return new Observable((subscriber) => subscriber.error(failure));
       }
@@ -252,8 +243,8 @@ describe('@Log — Observable-returning methods', () => {
     new OrdersApi().getOrders().subscribe({ error: (e) => (seenError = e) });
 
     expect(seenError).toBe(failure);
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0]).toMatchObject({ trigger: 'failure', error: failure });
+    expect(logger.entries).toHaveLength(2);
+    expect(logger.entries[1]).toMatchObject({ trigger: 'failure', error: failure });
   });
 
   it('does not subscribe to the source when nothing subscribes to the result', () => {
@@ -261,7 +252,7 @@ describe('@Log — Observable-returning methods', () => {
     const subscribeCounter = { count: 0 };
 
     class OrdersApi {
-      @Log({ on: 'success', logger })
+      @Log({ level: 'info', message: 'get orders', logger })
       getOrders() {
         return coldObservable([1], subscribeCounter);
       }
@@ -270,7 +261,8 @@ describe('@Log — Observable-returning methods', () => {
     new OrdersApi().getOrders(); // never subscribed
 
     expect(subscribeCounter.count).toBe(0);
-    expect(logger.entries).toHaveLength(0);
+    expect(logger.entries).toHaveLength(1); // only the call entry — no completion without a subscriber
+    expect(logger.entries[0].trigger).toBe('call');
   });
 
   it('subscribes to the source exactly once per subscriber, preserving cold semantics', () => {
@@ -278,7 +270,7 @@ describe('@Log — Observable-returning methods', () => {
     const subscribeCounter = { count: 0 };
 
     class OrdersApi {
-      @Log({ on: 'success', logger })
+      @Log({ level: 'info', message: 'get orders', logger })
       getOrders() {
         return coldObservable([1], subscribeCounter);
       }
@@ -289,21 +281,9 @@ describe('@Log — Observable-returning methods', () => {
     result$.subscribe();
 
     expect(subscribeCounter.count).toBe(2);
-    expect(logger.entries).toHaveLength(2);
-  });
-
-  it('returns the original Observable reference when only "call" is configured (no wrapping)', () => {
-    const logger = createRecordingLogger();
-    const source = new Observable<number>();
-
-    class OrdersApi {
-      @Log({ on: 'call', logger })
-      getOrders() {
-        return source;
-      }
-    }
-
-    expect(new OrdersApi().getOrders()).toBe(source);
+    // 1 call entry + 2 completion entries (one per subscription)
+    expect(logger.entries).toHaveLength(3);
+    expect(logger.entries.filter((e) => e.trigger === 'success')).toHaveLength(2);
   });
 
   it('unsubscribing from the result tears down the source subscription', () => {
@@ -311,7 +291,7 @@ describe('@Log — Observable-returning methods', () => {
     let torndown = false;
 
     class OrdersApi {
-      @Log({ on: 'success', logger })
+      @Log({ level: 'info', message: 'stream', logger })
       stream() {
         return new Observable(() => () => (torndown = true));
       }
@@ -329,7 +309,7 @@ describe('@Log — Observable-returning methods', () => {
     // A genuinely cold Observable: the setTimeout only starts once something
     // subscribes (the executor doesn't run at all until then).
     class OrdersApi {
-      @Log({ on: 'success', includeDuration: true, logger })
+      @Log({ level: 'info', message: 'stream', includeDuration: true, logger })
       stream() {
         return new Observable<number>((subscriber) => {
           const timer = setTimeout(() => {
@@ -345,12 +325,13 @@ describe('@Log — Observable-returning methods', () => {
     await new Promise((resolve) => setTimeout(resolve, 50)); // time passes before anyone subscribes
     await new Promise<void>((resolve) => result$.subscribe({ complete: resolve }));
 
-    expect(logger.entries).toHaveLength(1);
+    const completion = logger.entries.find((e) => e.trigger === 'success');
+    expect(completion).toBeDefined();
     // If duration were measured from the call above, it would be ~70ms.
     // Measured from subscription, it's ~20ms — proving the timer only
     // started once something actually subscribed.
-    expect(logger.entries[0].duration).toBeGreaterThanOrEqual(15);
-    expect(logger.entries[0].duration).toBeLessThan(50);
+    expect(completion?.duration).toBeGreaterThanOrEqual(15);
+    expect(completion?.duration).toBeLessThan(50);
   });
 });
 
@@ -363,39 +344,35 @@ describe('@Log — configuration', () => {
     expect(() => {
       class Bad {
         // @ts-expect-error intentionally invalid at the type level too
-        @Log({ level: 'critical' })
+        @Log({ level: 'critical', message: 'x' })
         method() {}
       }
       return Bad;
     }).toThrow(/unsupported level/i);
   });
 
-  it('rejects an unsupported trigger', () => {
-    expect(() => {
-      class Bad {
-        // @ts-expect-error intentionally invalid at the type level too
-        @Log({ on: 'sometimes' })
-        method() {}
-      }
-      return Bad;
-    }).toThrow(/unsupported trigger/i);
-  });
-
   it('rejects a negative duration threshold', () => {
     expect(() => {
       class Bad {
-        @Log({ warnIfDurationExceeds: -1 })
+        @Log({ level: 'info', message: 'x', warnIfDurationExceeds: -1 })
         method() {}
       }
       return Bad;
     }).toThrow(/warnIfDurationExceeds/);
   });
 
+  it('requires level and message at the type level', () => {
+    // @ts-expect-error level and message are required — this must not compile
+    Log({});
+    // @ts-expect-error message is required even when level is given
+    Log({ level: 'info' });
+  });
+
   it('escalates the completion entry to "warn" when the duration threshold is exceeded', async () => {
     const logger = createRecordingLogger();
 
     class Orders {
-      @Log({ level: 'info', on: 'success', includeDuration: true, warnIfDurationExceeds: 5, logger })
+      @Log({ level: 'info', message: 'slow', includeDuration: true, warnIfDurationExceeds: 5, logger })
       async slow() {
         await new Promise((resolve) => setTimeout(resolve, 20));
         return 'done';
@@ -404,16 +381,16 @@ describe('@Log — configuration', () => {
 
     await new Orders().slow();
 
-    expect(logger.entries).toHaveLength(1);
-    expect(logger.entries[0].level).toBe('warn');
-    expect(logger.entries[0].metadata).toMatchObject({ slow: true, warnIfDurationExceeds: 5 });
+    const completion = logger.entries.find((e) => e.trigger === 'success');
+    expect(completion?.level).toBe('warn');
+    expect(completion?.metadata).toMatchObject({ slow: true, warnIfDurationExceeds: 5 });
   });
 
   it('never downgrades an already-"error" entry when the threshold is exceeded', async () => {
     const logger = createRecordingLogger();
 
     class Orders {
-      @Log({ level: 'error', on: 'failure', includeDuration: true, warnIfDurationExceeds: 5, logger })
+      @Log({ level: 'error', message: 'slow failure', includeDuration: true, warnIfDurationExceeds: 5, logger })
       async slowFailure() {
         await new Promise((resolve) => setTimeout(resolve, 20));
         throw new Error('boom');
@@ -422,15 +399,16 @@ describe('@Log — configuration', () => {
 
     await expect(new Orders().slowFailure()).rejects.toThrow('boom');
 
-    expect(logger.entries[0].level).toBe('error');
-    expect(logger.entries[0].metadata).toMatchObject({ slow: true });
+    const completion = logger.entries.find((e) => e.trigger === 'failure');
+    expect(completion?.level).toBe('error');
+    expect(completion?.metadata).toMatchObject({ slow: true });
   });
 
-  it('does not measure or log duration for a call-only decorator', () => {
+  it('does not measure duration on the call entry (nothing has run yet)', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ on: 'call', includeDuration: true, logger })
+      @Log({ level: 'info', message: 'calc', includeDuration: true, logger })
       calculateTotal() {
         return 1;
       }
@@ -438,14 +416,17 @@ describe('@Log — configuration', () => {
 
     new Calc().calculateTotal();
 
+    expect(logger.entries[0].trigger).toBe('call');
     expect(logger.entries[0].duration).toBeUndefined();
+    expect(logger.entries[1].trigger).toBe('success');
+    expect(typeof logger.entries[1].duration).toBe('number');
   });
 
-  it('an "always" trigger logs exactly once per call, for either outcome', () => {
+  it('logs exactly two entries per call — one call entry, one completion entry — for either outcome', () => {
     const logger = createRecordingLogger();
 
     class Calc {
-      @Log({ on: 'always', logger })
+      @Log({ level: 'info', message: 'run', logger })
       run(shouldThrow: boolean) {
         if (shouldThrow) throw new Error('boom');
         return 'ok';
@@ -456,31 +437,15 @@ describe('@Log — configuration', () => {
     calc.run(false);
     expect(() => calc.run(true)).toThrow('boom');
 
-    expect(logger.entries).toHaveLength(2);
-    expect(logger.entries[0].trigger).toBe('success');
-    expect(logger.entries[1].trigger).toBe('failure');
-  });
-
-  it('an "on" array logs once per matching trigger that actually occurs', () => {
-    const logger = createRecordingLogger();
-
-    class Calc {
-      @Log({ on: ['call', 'failure'], logger })
-      run(): number {
-        throw new Error('boom');
-      }
-    }
-
-    expect(() => new Calc().run()).toThrow('boom');
-
-    expect(logger.entries.map((e) => e.trigger)).toEqual(['call', 'failure']);
+    expect(logger.entries.map((e) => e.trigger)).toEqual(['call', 'success', 'call', 'failure']);
   });
 });
 
 describe('deprecated aliases (@log/@warn/@error)', () => {
-  it('@log fires on every call at info level', () => {
+  it('@log logs a call entry and a success entry, both at info level', () => {
     const entries: LogEntry[] = [];
     const logger: Logger = { log: (e) => entries.push(e), warn: () => undefined, error: () => undefined };
+    setLogger(logger);
 
     class Svc {
       @log('doing work')
@@ -488,17 +453,20 @@ describe('deprecated aliases (@log/@warn/@error)', () => {
         return 'ok';
       }
     }
-    // the deprecated decorators don't accept a per-call logger override, so
-    // exercise them through the global bridge instead:
-    setLogger(logger);
 
     new Svc().run();
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ level: 'info', trigger: 'call', message: 'doing work' });
+    expect(entries.map((e) => e.trigger)).toEqual(['call', 'success']);
+    expect(entries[0]).toMatchObject({ level: 'info', message: 'doing work' });
   });
 
-  it('@error only fires on failure and rethrows', () => {
+  it('@error logs every entry (call + completion) at error level, and rethrows on failure', () => {
+    // NOTE: unlike the pre-@Log() @error, which fired only on failure, the
+    // alias is now a thin wrapper over Log({ level: 'error', message }) —
+    // and Log() always logs a call entry plus a completion entry. There is
+    // no more per-trigger level, so @error now logs *everything* it produces
+    // (including successful calls) at 'error' severity. This is a real
+    // behavior change from the previous @error — see the README.
     const entries: LogEntry[] = [];
     const logger: Logger = { log: () => undefined, warn: () => undefined, error: (e) => entries.push(e) };
     setLogger(logger);
@@ -513,14 +481,15 @@ describe('deprecated aliases (@log/@warn/@error)', () => {
 
     const svc = new Svc();
     expect(svc.save(false)).toBe('ok');
-    expect(entries).toHaveLength(0);
+    expect(entries.map((e) => e.trigger)).toEqual(['call', 'success']);
 
+    entries.length = 0;
     expect(() => svc.save(true)).toThrow('boom');
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ level: 'error', trigger: 'failure' });
+    expect(entries.map((e) => e.trigger)).toEqual(['call', 'failure']);
+    expect(entries[1]).toMatchObject({ level: 'error', trigger: 'failure' });
   });
 
-  it('@warn fires on every call at warn level', () => {
+  it('@warn logs a call entry and a success entry, both at warn level', () => {
     const entries: LogEntry[] = [];
     const logger: Logger = { log: () => undefined, warn: (e) => entries.push(e), error: () => undefined };
     setLogger(logger);
@@ -534,7 +503,6 @@ describe('deprecated aliases (@log/@warn/@error)', () => {
 
     new Svc().run();
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ level: 'warn', trigger: 'call' });
+    expect(entries.map((e) => e.trigger)).toEqual(['call', 'success']);
   });
 });
