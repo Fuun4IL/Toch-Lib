@@ -1,17 +1,20 @@
 import { Provider } from '@angular/core';
 import { TochLibConfig, TOCH_LIB_CONFIG } from 'toch-lib/core';
 import { provideTochCsrfInterceptor } from 'toch-lib/csrf';
-import { provideTochCacheInterceptor } from 'toch-lib/cache';
 
 /**
  * Registers the library configuration and the CSRF interceptor.
  *
- * Standalone apps (Angular 16–20):
+ * `toch-lib/cache` and `toch-lib/logger` are opted into separately —
+ * `provideTochLib` only bundles the pieces that are config-gated through
+ * `TOCH_LIB_CONFIG` (currently just CSRF):
  * ```ts
  * bootstrapApplication(AppComponent, {
  *   providers: [
  *     provideHttpClient(withInterceptorsFromDi()),
  *     provideTochLib({ csrf: { fetchUrl: '/sap/opu/odata/sap/MY_SRV/' } }),
+ *     provideCache(),                   // toch-lib/cache — caches GETs, see its README section
+ *     ...provideTochLogger('matomo'),   // toch-lib/logger
  *   ],
  * });
  * ```
@@ -26,9 +29,8 @@ import { provideTochCacheInterceptor } from 'toch-lib/cache';
 export function provideTochLib(config: TochLibConfig = {}): Provider[] {
   return [
     { provide: TOCH_LIB_CONFIG, useValue: config },
-    // Both interceptors are config-gated: without a matching config section
-    // they pass every request through untouched.
+    // Config-gated: without a `csrf` section it passes every request
+    // through untouched.
     ...provideTochCsrfInterceptor(),
-    ...provideTochCacheInterceptor(),
   ];
 }

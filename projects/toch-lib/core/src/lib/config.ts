@@ -43,27 +43,9 @@ export interface TochSsoConfig {
   userInfoUrl?: string;
 }
 
-export interface TochCacheConfig {
-  /** Default time-to-live for cache entries in ms. Default 5 minutes. */
-  defaultTtlMs?: number;
-  /** Max number of entries kept; oldest entries are evicted first. Default 200. */
-  maxEntries?: number;
-  /**
-   * Enables the HTTP GET cache interceptor. Without this section the
-   * interceptor passes every request through untouched.
-   */
-  interceptor?: {
-    /** Only cache GETs whose URL starts with one of these prefixes. Empty/omitted = all GETs. */
-    urlPrefixes?: string[];
-    /** TTL for cached responses; falls back to `defaultTtlMs`. */
-    ttlMs?: number;
-  };
-}
-
 export interface TochLibConfig {
   csrf?: TochCsrfConfig;
   sso?: TochSsoConfig;
-  cache?: TochCacheConfig;
 }
 
 export const TOCH_LIB_CONFIG = new InjectionToken<TochLibConfig>('TOCH_LIB_CONFIG', {

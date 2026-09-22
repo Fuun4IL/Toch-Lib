@@ -1,94 +1,66 @@
-import { inject, Injectable, Injector, Provider } from '@angular/core';
+import { Injectable } from '@angular/core';
 import {
-  HTTP_INTERCEPTORS,
   HttpEvent,
   HttpHandler,
-  HttpHandlerFn,
   HttpInterceptor,
-  HttpInterceptorFn,
   HttpRequest,
   HttpResponse,
 } from '@angular/common/http';
 import { Observable, of, tap } from 'rxjs';
-import { TochCacheConfig, TOCH_LIB_CONFIG } from 'toch-lib/core';
-import { CacheService } from './cache.service';
-
-/** Tag put on every interceptor-cached response: `cache.invalidateTag(HTTP_CACHE_TAG)` clears them all. */
-export const HTTP_CACHE_TAG = 'toch:http';
-
-/** Cache key used for a request — `invalidate(httpCacheKey(url))` after a mutation. */
-export function httpCacheKey(urlWithParams: string): string {
-  return `${HTTP_CACHE_TAG}:${urlWithParams}`;
-}
-
-function handle(
-  req: HttpRequest<unknown>,
-  next: (req: HttpRequest<unknown>) => Observable<HttpEvent<unknown>>,
-  cache: CacheService,
-  config: TochCacheConfig
-): Observable<HttpEvent<unknown>> {
-  const interceptorConfig = config.interceptor;
-  if (!interceptorConfig || req.method !== 'GET') {
-    return next(req);
-  }
-  const prefixes = interceptorConfig.urlPrefixes ?? [];
-  if (prefixes.length > 0 && !prefixes.some((p) => req.url.startsWith(p))) {
-    return next(req);
-  }
-
-  const key = httpCacheKey(req.urlWithParams);
-  const cached = cache.get<HttpResponse<unknown>>(key);
-  if (cached) {
-    return of(cached.clone());
-  }
-
-  return next(req).pipe(
-    tap((event) => {
-      if (event instanceof HttpResponse) {
-        cache.set(key, event.clone(), {
-          ttlMs: interceptorConfig.ttlMs,
-          tags: [HTTP_CACHE_TAG],
-        });
-      }
-    })
-  );
-}
+import { CACHE_BYPASS, CACHE_OPTIONS } from './cache-context';
+import { CacheKeyGenerator } from './cache-key-generator';
+import { CacheManager } from './cache.manager';
 
 /**
- * Caches GET responses through CacheService, so TTL, tags and
- * invalidate/validate all apply to HTTP data. Enabled only when
- * `TOCH_LIB_CONFIG.cache.interceptor` is configured; passes everything
- * through untouched otherwise.
+ * Caches successful GET responses. Deliberately thin: it only decides
+ * whether a request participates in caching, reads per-request options from
+ * `HttpContext`, asks `CacheKeyGenerator` for a key, and checks/stores
+ * through `CacheManager` — all the actual caching logic (expiration,
+ * storage, request de-duplication) lives there, not here.
  *
- * After a mutation, clear what it affected:
- * ```ts
- * cache.invalidate(httpCacheKey(url));          // one URL
- * cache.invalidateWhere(/OrderSet/);            // by pattern
- * cache.invalidateTag(HTTP_CACHE_TAG);          // every cached response
- * ```
+ * V1 supports exactly two policies (see the README's "Cache policy"
+ * section for why more aren't added yet): normal caching (read on a hit,
+ * request + store on a miss) and `noCache()` (skip caching entirely, for
+ * this request only).
  */
-export const tochCacheInterceptor: HttpInterceptorFn = (
-  req: HttpRequest<unknown>,
-  next: HttpHandlerFn
-): Observable<HttpEvent<unknown>> => {
-  const cache = inject(CacheService);
-  const config = inject(TOCH_LIB_CONFIG, { optional: true })?.cache ?? {};
-  return handle(req, next, cache, config);
-};
-
-/** Class-based variant for DI registration (`provideTochLib` registers it). */
 @Injectable()
 export class CacheInterceptor implements HttpInterceptor {
-  private readonly injector = inject(Injector);
+  constructor(
+    private readonly manager: CacheManager,
+    private readonly keyGenerator: CacheKeyGenerator
+  ) {}
 
   intercept(req: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
-    const cache = this.injector.get(CacheService);
-    const config = this.injector.get(TOCH_LIB_CONFIG, {})?.cache ?? {};
-    return handle(req, (r) => next.handle(r), cache, config);
-  }
-}
+    if (req.method !== 'GET' || req.context.get(CACHE_BYPASS)) {
+      return next.handle(req);
+    }
 
-/** Registers the DI-based cache interceptor on its own. */
-export function provideTochCacheInterceptor(): Provider[] {
-  return [{ provide: HTTP_INTERCEPTORS, useClass: CacheInterceptor, multi: true }];
+    const key = this.keyGenerator.generate(req);
+
+    const cached = this.manager.get<HttpResponse<unknown>>(key);
+    if (cached) {
+      // Never hand out the stored response instance itself — a consumer
+      // mutating it (e.g. via `HttpResponse.clone()`-based patterns
+      // upstream) must not corrupt what's cached.
+      return of(cached.clone());
+    }
+
+    const options = req.context.get(CACHE_OPTIONS);
+    const ttl = options?.ttl ?? this.manager.defaultTtl;
+
+    return this.manager.dedupe(key, () =>
+      next.handle(req).pipe(
+        tap((event) => {
+          // Only a completed HttpResponse is cached. HttpErrorResponses
+          // never reach here (they flow through the Observable's error
+          // channel, not `next`), and intermediate events (Sent, upload/
+          // download progress) simply aren't HttpResponse instances — both
+          // pass through to the caller untouched, uncached.
+          if (event instanceof HttpResponse) {
+            this.manager.set(key, event.clone(), ttl);
+          }
+        })
+      )
+    );
+  }
 }

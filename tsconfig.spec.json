@@ -4,5 +4,5 @@
     "outDir": "./out-tsc/spec",
     "types": ["jest", "node"]
   },
-  "include": ["projects/toch-lib/logger/src/**/*.ts"]
+  "include": ["projects/toch-lib/logger/src/**/*.ts", "projects/toch-lib/cache/src/**/*.ts", "projects/toch-lib/jest-setup.ts"]
 }

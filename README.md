@@ -28,6 +28,7 @@ Register the config and interceptors once in `app.config.ts`:
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 import { provideTochLib } from 'toch-lib';
 import { provideMockAuth } from 'toch-lib/auth';        // or provideSsoAuth()
+import { provideCache } from 'toch-lib/cache';
 import { provideTochLogger } from 'toch-lib/logger';
 
 export const appConfig: ApplicationConfig = {
@@ -35,16 +36,16 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(withInterceptorsFromDi()),
     provideTochLib({
       csrf: { fetchUrl: '/sap/opu/odata/sap/ZMY_SRV/', urlPrefixes: ['/sap/'] },
-      cache: { interceptor: { urlPrefixes: ['/sap/'], ttlMs: 60_000 } },
       sso: { pingUrl: '/sap/opu/odata/sap/ZMY_SRV/', userInfoUrl: '/sap/bc/ui2/start_up' },
     }),
+    provideCache(),                         // optional config: provideCache({ defaultTtl: 120_000 })
     ...provideMockAuth(MOCK_USER),          // dev — swap for ...provideSsoAuth() in prod
     ...provideTochLogger('matomo'),         // 'console' (default) | 'matomo' | custom adapter
   ],
 };
 ```
 
-`provideTochLib` registers the CSRF and cache interceptors; both stay inactive until their config section exists, so enabling them is purely a config decision.
+`provideTochLib` registers the CSRF interceptor; it stays inactive until the `csrf` config section exists, so enabling it is purely a config decision. `toch-lib/cache` and `toch-lib/logger` are opted into separately, via their own `provide*()` calls — nothing in either activates just by importing `toch-lib`.
 
 ## Entry points — take only what you need
 
@@ -52,10 +53,10 @@ Each area is its own entry point; anything you don't import tree-shakes away.
 
 | Import from | Contents |
 | --- | --- |
-| `toch-lib/core` | `TOCH_LIB_CONFIG` + config types (csrf, sso, cache) |
+| `toch-lib/core` | `TOCH_LIB_CONFIG` + config types (csrf, sso) |
 | `toch-lib/odata` | Fluent OData **v2 + v4** query builder (pure, no Angular services) |
 | `toch-lib/csrf` | SAP `X-CSRF-Token: Fetch` interceptor + `CsrfTokenService` |
-| `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) + HTTP GET cache interceptor |
+| `toch-lib/cache` | HTTP GET cache interceptor — `cache()`/`noCache()`, configurable TTL, request de-duplication |
 | `toch-lib/auth` | Adapter-based `AuthService` (signal), mock/SSO adapters, `SsoService` |
 | `toch-lib/logger` | `@log`/`@warn`/`@error` method decorators, console/Matomo adapters |
 | `toch-lib` | everything above, plus `provideTochLib()` |
@@ -105,20 +106,157 @@ A custom source (e.g. a non-SSO API) is one class implementing `AuthAdapter<TUse
 
 ## Caching (`toch-lib/cache`)
 
-You decide what to save and when it stops being valid:
+Caches successful `GET` responses in memory, with a configurable global default TTL (1 minute out of the box) and a per-request escape hatch. No decorators, no method wrapping, no URL/query-string hacks — just an `HttpInterceptor` plus two small `HttpContext` helpers.
+
+### What it does
+
+- Every `GET` request is cached by default — the interceptor is opt-in at the app level (`provideCache()`), but once registered, no per-request `cache()` call is needed for the common case.
+- A response is cached only once it succeeds: a failed request (`HttpErrorResponse`, network error, etc.) is never stored, and never poisons later attempts.
+- An expired entry is treated exactly like a miss and is removed, never returned stale.
+- Three concurrent identical `GET`s (three components requesting the same URL before any of them has resolved) result in **one** backend call — not three — with all three receiving the same result.
+- Non-`GET` requests are never touched.
+
+### Setup
 
 ```ts
-// transparent HTTP caching — enable via config: cache.interceptor
-// after a mutation, clear exactly what it affected:
-cache.invalidate(httpCacheKey(url));
-cache.invalidateWhere(/OrderSet/);
-cache.invalidateTag(HTTP_CACHE_TAG);      // all cached responses
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
+import { provideCache } from 'toch-lib/cache';
 
-// manual/service-level caching:
-cache.wrap('products', this.http.get<Product[]>(url), { ttlMs: 60_000, tags: ['products'] });
-cache.set('draft', order, { ttlMs: Infinity });
-cache.validate('draft', o => o.userId === user.id);   // entry removed when the rule fails
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideHttpClient(withInterceptorsFromDi()),
+    provideCache(), // default TTL: 60_000ms (1 minute)
+  ],
+};
 ```
+
+NgModule apps: add `provideCache(...)` to the root module's `providers` (`HttpClientModule` picks it up automatically, same as any other `HTTP_INTERCEPTORS` entry).
+
+### Global configuration
+
+```ts
+provideCache({ defaultTtl: 120_000 }); // 2 minutes, applies to every request that doesn't override it
+```
+
+`defaultTtl` is the only setting in V1 (see "Cache policy" below for why the API stays this small on purpose). Omit it (`provideCache()`) to keep the 1-minute default.
+
+### Per-request TTL and bypass
+
+```ts
+import { cache, noCache } from 'toch-lib/cache';
+
+// Default: 1 minute (or whatever provideCache({ defaultTtl }) set)
+this.http.get('/api/products');
+
+// Cache for 5 minutes, overriding the global default for this request only
+this.http.get('/api/products', { context: cache({ ttl: 5 * 60 * 1000 }) });
+
+// Never cache — always hits the backend, never reads or writes the cache
+this.http.get('/api/current-user', { context: noCache() });
+```
+
+`cache()`/`noCache()` return an `HttpContext` — nothing is encoded into the URL or query string, so cached requests look identical on the wire to uncached ones.
+
+### How the interceptor works
+
+```text
+Angular Service
+      |
+      | HttpClient
+      v
+CacheInterceptor   — detects eligibility, reads HttpContext, gets a key, checks/stores through CacheManager
+      |
+      v
+CacheManager       — get/set/delete/clear on the store, expiration, in-flight request de-duplication
+      |
+      v
+CacheStore (interface)
+      |
+      v
+MemoryCacheStore   — the only implementation today; swap it via the CACHE_STORE token later
+```
+
+`CacheInterceptor` is intentionally thin — every actual caching decision (is this fresh? what evicts it? is a request already in flight for this key?) lives in `CacheManager`, not scattered through the interceptor. `CacheStore` is a small interface (`get`/`set`/`delete`/`clear` over a `CacheEntry<T> { value, expiresAt }`) specifically so a different storage backend can be swapped in later without touching `CacheManager` or the interceptor at all.
+
+For a request that isn't a `GET`, or carries `noCache()`, the interceptor does nothing but forward to `next.handle(req)` — it never touches `CacheManager`.
+
+### Cache key behavior
+
+`CacheKeyGenerator` builds the key as `` `${method}:${urlWithParams}` ``, so method, URL, and query parameters are all part of the key — `GET /api/users?page=1` and `GET /api/users?page=2` never collide. It's a dedicated class specifically so the key format can change later without touching the interceptor.
+
+It deliberately does **not** use request headers (including `Authorization`) as part of the key — see Security, below.
+
+### Cache expiration
+
+Every stored entry carries `expiresAt` (epoch ms). A read compares `entry.expiresAt > Date.now()`: true is a hit, false is treated exactly like an outright miss **and** the stale entry is deleted from the store on that read. There's no separate sweep/timer — expiry is checked lazily, on read.
+
+### Concurrent request handling
+
+```text
+             ┌── Component A
+             │
+GET /users ──┼── Component B  ──►  ONE HTTP request, shared by all three
+             │
+             └── Component C
+```
+
+When a request misses the cache, `CacheManager.dedupe(key, factory)` runs `factory()` (the actual backend call) once and multicasts the result to every caller for the same key that arrives while it's still pending — implemented with RxJS `shareReplay`, so it's a normal cold-Observable-becomes-shared-hot pattern, not custom bookkeeping. The in-flight entry is removed the moment the request settles, on **either** success or failure, so:
+
+- a failed shared request is never cached, and
+- the very next call (including an immediate retry after that failure) starts a fresh request rather than replaying the old one.
+
+### Cache clearing / invalidation
+
+```ts
+import { CacheManager } from 'toch-lib/cache';
+
+export class OrdersService {
+  private readonly cacheManager = inject(CacheManager);
+
+  saveOrder(order: Order) {
+    return this.api.post('/api/orders', order).pipe(
+      tap(() => this.cacheManager.delete('GET:/api/orders')) // or .clear() for everything
+    );
+  }
+}
+```
+
+`noCache()` and invalidation are different things, and it's worth keeping them that way: `noCache()` means *don't read, don't write* for one specific request; `delete`/`clear` mean *remove something that's already stored*. V1 ships `delete(key)` and `clear()`; tag-based or pattern-based invalidation (`invalidateTag(...)`, `invalidateByTag(...)`) is a natural future extension of `CacheManager`/`CacheStore`, not added here because nothing in this library needs it yet.
+
+### Security considerations
+
+Be conservative about what ends up cached and for how long:
+
+- **The cache key does not include headers.** `Authorization` (or any other header) is deliberately left out of `CacheKeyGenerator` — keying on a bearer token would make a token refresh silently fragment the cache instead of reusing entries, and is generally the wrong tool for scoping data to a user. If a request's result differs per user/tenant, make that explicit in the URL or query string (where `CacheKeyGenerator` already picks it up) — or reach for `noCache()`.
+- **`toch-lib/cache` does not know which of your endpoints are sensitive.** It caches every successful `GET` by default. For anything user-specific, permission-sensitive, or where staleness would be unsafe (current-user profile, permissions, one-time tokens, anything behind per-request authorization that isn't in the URL), use `noCache()` explicitly rather than relying on a short TTL:
+  ```ts
+  this.http.get('/api/current-user', { context: noCache() });
+  ```
+- **When in doubt, use `noCache()`.** It's a single, obvious, per-request opt-out — the safe default when you're not sure whether caching a given endpoint is safe.
+- The cache is in-memory and per-tab/session (`MemoryCacheStore`, backed by a `Map`) — it does not persist across reloads and is not shared across browser tabs, which limits (but does not eliminate) the blast radius of caching something that shouldn't have been.
+
+### Cache policy (why there's no `bypass`/`refresh`/`no-store` enum)
+
+V1 supports exactly two policies: normal caching (read on a hit, request + store on a miss) and `noCache()` (skip entirely). A `CachePolicy` enum with `refresh`/`no-store`/etc. was deliberately left out — nothing in this library needs it yet, and adding options that don't do anything meaningful yet would make the API lie about what's supported. `CacheOptions`/`CACHE_OPTIONS` (the `HttpContext` tokens) hold configuration only, no logic, so a future policy is additive: a new field plus a branch in `CacheInterceptor`, not a rewrite.
+
+### Future extension points
+
+- **Storage**: implement `CacheStore` and provide it via the `CACHE_STORE` token to back the cache with something other than a `Map` (e.g. persisted storage) without touching `CacheManager` or the interceptor.
+- **Invalidation**: tag- or pattern-based invalidation on top of the existing `delete`/`clear`.
+- **Cache policy**: additional `CacheOptions` fields (e.g. a `refresh`/force-reload flag) read by the interceptor alongside `ttl`.
+- **Observability**: optional cache hit/miss/store events or hooks — deliberately not built in yet, and deliberately **not** wired into `toch-lib/logger` automatically; caching and logging stay independent modules. An app that wants to log cache activity can call `toch-lib/logger`'s `@Log()` on its own service methods, or `CacheManager` could later expose an event stream to subscribe to explicitly.
+
+### API reference
+
+| Export | What it is |
+| --- | --- |
+| `provideCache(config?)` | Registers `CACHE_CONFIG` and the interceptor. Call once, at app startup. |
+| `cache(options?)` / `noCache()` | Per-request `HttpContext` helpers. |
+| `CacheManager` | `get`/`set`/`delete`/`clear`/`dedupe` — inject it directly for manual invalidation or programmatic caching. |
+| `CacheStore` / `CACHE_STORE` | The storage abstraction and its DI token, for swapping in a different backend. |
+| `MemoryCacheStore` | The default (and only, for now) `CacheStore`. |
+| `CacheKeyGenerator` | Builds `` `${method}:${urlWithParams}` `` cache keys; inject and override for a custom format. |
+| `CacheConfig` / `CACHE_CONFIG` | `{ defaultTtl: number }` and its DI token. |
 
 ## CSRF interceptor (`toch-lib/csrf`)
 
