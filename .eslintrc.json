@@ -1,0 +1,18 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "sourceType": "module",
+    "ecmaVersion": 2022
+  },
+  "ignorePatterns": ["dist/**", "node_modules/**", "**/*.spec.ts"],
+  "rules": {},
+  "overrides": [
+    {
+      "files": ["projects/toch-lib/auth/src/lib/sso.service.ts", "projects/toch-lib/auth/src/lib/sso-auth.adapter.ts"],
+      "rules": {
+        "require-log-decorator": ["warn", { "ignoreNames": ["buildAuthorizeUrl", "parseCallback", "generateCodeVerifier", "computeCodeChallenge"] }]
+      }
+    }
+  ]
+}

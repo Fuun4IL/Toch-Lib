@@ -1,35 +1,45 @@
 import { APP_INITIALIZER, inject, Injectable, InjectionToken, Provider, Type } from '@angular/core';
+import { Logger, LogEntry } from './logger.types';
+import { setLogger } from './logger.bridge';
 
-/**
- * Adapter contract for log sinks. Bind one to LOGGER_ADAPTER (or use
- * `provideTochLogger`) — the `@log`/`@warn`/`@error` decorators write here.
- */
-export interface LoggerAdapter {
-  log(message: string, extra?: unknown): void;
-  warn(message: string, extra?: unknown): void;
-  error(message: string, extra?: unknown): void;
-}
+export { setLogger, getLogger } from './logger.bridge';
 
-export const LOGGER_ADAPTER = new InjectionToken<LoggerAdapter>('LOGGER_ADAPTER');
+export const LOGGER = new InjectionToken<Logger>('LOGGER');
 
-/** Prefix used by the console adapter, replaceable per app. */
+/** Prefix used by the console logger, replaceable per app. */
 export const LOGGER_PREFIX = new InjectionToken<string>('LOGGER_PREFIX', {
   providedIn: 'root',
   factory: () => '[app]',
 });
 
+function format(prefix: string, entry: LogEntry): unknown[] {
+  const parts = [`${prefix} [${entry.trigger}]`, entry.message];
+  if (entry.className || entry.methodName) {
+    parts.push(`(${[entry.className, entry.methodName].filter(Boolean).join('.')})`);
+  }
+  if (entry.duration !== undefined) parts.push(`${entry.duration.toFixed(1)}ms`);
+  const extra: Record<string, unknown> = {};
+  if (entry.args !== undefined) extra['args'] = entry.args;
+  if (entry.error !== undefined) extra['error'] = entry.error;
+  if (entry.metadata !== undefined) extra['metadata'] = entry.metadata;
+  return Object.keys(extra).length ? [...parts, extra] : parts;
+}
+
 @Injectable({ providedIn: 'root' })
-export class ConsoleLoggerAdapter implements LoggerAdapter {
+export class ConsoleLogger implements Logger {
   private readonly prefix = inject(LOGGER_PREFIX);
 
-  log(message: string, extra?: unknown): void {
-    console.log(this.prefix, message, extra ?? '');
+  debug(entry: LogEntry): void {
+    console.debug(...format(this.prefix, entry));
   }
-  warn(message: string, extra?: unknown): void {
-    console.warn(this.prefix, message, extra ?? '');
+  log(entry: LogEntry): void {
+    console.log(...format(this.prefix, entry));
   }
-  error(message: string, extra?: unknown): void {
-    console.error(this.prefix, message, extra ?? '');
+  warn(entry: LogEntry): void {
+    console.warn(...format(this.prefix, entry));
+  }
+  error(entry: LogEntry): void {
+    console.error(...format(this.prefix, entry));
   }
 }
 
@@ -47,83 +57,68 @@ declare global {
  * back to console-only when `_paq` is absent.
  */
 @Injectable({ providedIn: 'root' })
-export class MatomoLoggerAdapter implements LoggerAdapter {
-  private readonly console = inject(ConsoleLoggerAdapter);
+export class MatomoLogger implements Logger {
+  private readonly console = inject(ConsoleLogger);
 
-  log(message: string, extra?: unknown): void {
-    this.track('log', message, extra);
-    this.console.log(message, extra);
+  debug(entry: LogEntry): void {
+    this.track(entry);
+    this.console.debug(entry);
   }
-  warn(message: string, extra?: unknown): void {
-    this.track('warn', message, extra);
-    this.console.warn(message, extra);
+  log(entry: LogEntry): void {
+    this.track(entry);
+    this.console.log(entry);
   }
-  error(message: string, extra?: unknown): void {
-    this.track('error', message, extra);
-    this.console.error(message, extra);
+  warn(entry: LogEntry): void {
+    this.track(entry);
+    this.console.warn(entry);
+  }
+  error(entry: LogEntry): void {
+    this.track(entry);
+    this.console.error(entry);
   }
 
-  private track(action: string, message: string, extra?: unknown): void {
+  private track(entry: LogEntry): void {
     if (typeof window === 'undefined' || !Array.isArray(window._paq)) {
       return;
     }
-    const name = extra !== undefined ? `${message} | ${safeStringify(extra)}` : message;
-    window._paq.push(['trackEvent', 'app-log', action, name]);
-  }
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return typeof value === 'string' ? value : JSON.stringify(value);
-  } catch {
-    return String(value);
+    const label = entry.className ? `${entry.className}.${entry.methodName ?? ''}` : entry.methodName;
+    const name = [entry.message, label, entry.duration !== undefined ? `${entry.duration.toFixed(1)}ms` : undefined]
+      .filter(Boolean)
+      .join(' | ');
+    window._paq.push(['trackEvent', 'app-log', `${entry.trigger}:${entry.level}`, name]);
   }
 }
 
 /**
- * Adapter used by the `@log`/`@warn`/`@error` decorators. Defaults to a bare
- * console sink so decorated methods still log before the app finishes
- * bootstrapping (or in code that never calls `provideTochLogger`); swapped
- * for the configured adapter (console/Matomo/custom) once `provideTochLogger`
- * runs at app startup.
- */
-let activeAdapter: LoggerAdapter = {
-  log: (message, extra) => console.log('[app]', message, extra ?? ''),
-  warn: (message, extra) => console.warn('[app]', message, extra ?? ''),
-  error: (message, extra) => console.error('[app]', message, extra ?? ''),
-};
-
-/** Swaps the adapter the decorators write to. `provideTochLogger` calls this for you. */
-export function setLoggerAdapter(adapter: LoggerAdapter): void {
-  activeAdapter = adapter;
-}
-
-/** The adapter currently in effect for `@log`/`@warn`/`@error`. Internal to this entry point. */
-export function getLoggerAdapter(): LoggerAdapter {
-  return activeAdapter;
-}
-
-/**
- * Picks the log sink used by the `@log`/`@warn`/`@error` decorators:
+ * Picks the log backend used by the `@Log()` decorator:
  * `provideTochLogger('matomo')`, `provideTochLogger('console')`,
- * or `provideTochLogger(MyCustomAdapter)`.
+ * or `provideTochLogger(MyCustomLogger)`.
  */
-export function provideTochLogger(
-  adapter: 'console' | 'matomo' | Type<LoggerAdapter> = 'console'
-): Provider[] {
-  const useClass =
-    adapter === 'console'
-      ? ConsoleLoggerAdapter
-      : adapter === 'matomo'
-      ? MatomoLoggerAdapter
-      : adapter;
+export function provideTochLogger(backend: 'console' | 'matomo' | Type<Logger> = 'console'): Provider[] {
+  const useClass = backend === 'console' ? ConsoleLogger : backend === 'matomo' ? MatomoLogger : backend;
   return [
-    { provide: LOGGER_ADAPTER, useClass },
+    { provide: LOGGER, useClass },
     {
       provide: APP_INITIALIZER,
       multi: true,
-      useFactory: (instance: LoggerAdapter) => () => setLoggerAdapter(instance),
-      deps: [LOGGER_ADAPTER],
+      useFactory: (instance: Logger) => () => setLogger(instance),
+      deps: [LOGGER],
     },
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Deprecated aliases (pre-@Log naming). Kept so code written against the
+// previous logger.ts keeps compiling; new code should use the names above.
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link Logger} instead — same shape, structured-entry name. */
+export type LoggerAdapter = Logger;
+/** @deprecated Use {@link LOGGER} instead — same token. */
+export const LOGGER_ADAPTER = LOGGER;
+/** @deprecated Use {@link ConsoleLogger} instead — same class. */
+export const ConsoleLoggerAdapter = ConsoleLogger;
+/** @deprecated Use {@link MatomoLogger} instead — same class. */
+export const MatomoLoggerAdapter = MatomoLogger;
+/** @deprecated Use {@link setLogger} instead — same function. */
+export const setLoggerAdapter = setLogger;
