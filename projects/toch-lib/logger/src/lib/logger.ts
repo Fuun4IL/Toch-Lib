@@ -1,8 +1,8 @@
-import { inject, Injectable, InjectionToken, Provider, Type } from '@angular/core';
+import { APP_INITIALIZER, inject, Injectable, InjectionToken, Provider, Type } from '@angular/core';
 
 /**
  * Adapter contract for log sinks. Bind one to LOGGER_ADAPTER (or use
- * `provideTochLogger`) — application code only ever talks to LoggerService.
+ * `provideTochLogger`) — the `@log`/`@warn`/`@error` decorators write here.
  */
 export interface LoggerAdapter {
   log(message: string, extra?: unknown): void;
@@ -81,27 +81,30 @@ function safeStringify(value: unknown): string {
 }
 
 /**
- * Application-facing logger. Delegates to the adapter bound to
- * LOGGER_ADAPTER; defaults to the console adapter when none is provided.
+ * Adapter used by the `@log`/`@warn`/`@error` decorators. Defaults to a bare
+ * console sink so decorated methods still log before the app finishes
+ * bootstrapping (or in code that never calls `provideTochLogger`); swapped
+ * for the configured adapter (console/Matomo/custom) once `provideTochLogger`
+ * runs at app startup.
  */
-@Injectable({ providedIn: 'root' })
-export class LoggerService implements LoggerAdapter {
-  private readonly adapter =
-    inject(LOGGER_ADAPTER, { optional: true }) ?? inject(ConsoleLoggerAdapter);
+let activeAdapter: LoggerAdapter = {
+  log: (message, extra) => console.log('[app]', message, extra ?? ''),
+  warn: (message, extra) => console.warn('[app]', message, extra ?? ''),
+  error: (message, extra) => console.error('[app]', message, extra ?? ''),
+};
 
-  log(message: string, extra?: unknown): void {
-    this.adapter.log(message, extra);
-  }
-  warn(message: string, extra?: unknown): void {
-    this.adapter.warn(message, extra);
-  }
-  error(message: string, extra?: unknown): void {
-    this.adapter.error(message, extra);
-  }
+/** Swaps the adapter the decorators write to. `provideTochLogger` calls this for you. */
+export function setLoggerAdapter(adapter: LoggerAdapter): void {
+  activeAdapter = adapter;
+}
+
+/** The adapter currently in effect for `@log`/`@warn`/`@error`. Internal to this entry point. */
+export function getLoggerAdapter(): LoggerAdapter {
+  return activeAdapter;
 }
 
 /**
- * Picks the log sink:
+ * Picks the log sink used by the `@log`/`@warn`/`@error` decorators:
  * `provideTochLogger('matomo')`, `provideTochLogger('console')`,
  * or `provideTochLogger(MyCustomAdapter)`.
  */
@@ -114,5 +117,13 @@ export function provideTochLogger(
       : adapter === 'matomo'
       ? MatomoLoggerAdapter
       : adapter;
-  return [{ provide: LOGGER_ADAPTER, useClass }];
+  return [
+    { provide: LOGGER_ADAPTER, useClass },
+    {
+      provide: APP_INITIALIZER,
+      multi: true,
+      useFactory: (instance: LoggerAdapter) => () => setLoggerAdapter(instance),
+      deps: [LOGGER_ADAPTER],
+    },
+  ];
 }

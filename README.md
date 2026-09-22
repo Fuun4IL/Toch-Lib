@@ -57,7 +57,7 @@ Each area is its own entry point; anything you don't import tree-shakes away.
 | `toch-lib/csrf` | SAP `X-CSRF-Token: Fetch` interceptor + `CsrfTokenService` |
 | `toch-lib/cache` | `CacheService` (TTL, tags, validate/invalidate) + HTTP GET cache interceptor |
 | `toch-lib/auth` | Adapter-based `AuthService` (signal), mock/SSO adapters, `SsoService` |
-| `toch-lib/logger` | `LoggerService` with console/Matomo adapters |
+| `toch-lib/logger` | `@log`/`@warn`/`@error` method decorators, console/Matomo adapters |
 | `toch-lib` | everything above, plus `provideTochLib()` |
 
 ## OData query builder (`toch-lib/odata`)
@@ -132,15 +132,34 @@ Stays inactive (passes every request through untouched) until the `csrf` config 
 
 ## Logger / Matomo (`toch-lib/logger`)
 
-```ts
-...provideTochLogger('matomo')    // or 'console' (default), or your own LoggerAdapter class
+Logging is decorator-driven — no injected service, no manual `logger.log(...)` calls. Decorate the method you want logged; the label is optional and defaults to the method name:
 
-logger.log('order saved', order);
-logger.warn('slow response', ms);
-logger.error('save failed', err);
+```ts
+import { log, warn, error } from 'toch-lib/logger';
+
+@Injectable()
+export class OrdersService {
+  @log('fetching orders')
+  getOrders() { return this.api.get<Order[]>('OrderSet'); }
+
+  @warn('slow endpoint — legacy service')
+  getLegacyOrders() { return this.api.get<Order[]>('LegacyOrderSet'); }
+
+  @error('save order failed')
+  saveOrder(order: Order) { return this.api.post<Order>('OrderSet', order); }
+}
 ```
 
-The Matomo adapter pushes entries as `trackEvent('app-log', level, message)` to the `_paq` queue (the Matomo snippet stays in the app's `index.html`) and mirrors to the console; it degrades to console-only when Matomo isn't loaded.
+- `@log`/`@warn` fire on every call, logging the label plus the call's arguments.
+- `@error` wraps the call (sync throws, rejected Promises, and errored Observables all count), logs the failure, then rethrows — the caller still sees the error.
+
+Pick the sink once, at app startup:
+
+```ts
+...provideTochLogger('matomo')    // or 'console' (default), or your own LoggerAdapter class
+```
+
+The Matomo adapter pushes entries as `trackEvent('app-log', level, message)` to the `_paq` queue (the Matomo snippet stays in the app's `index.html`) and mirrors to the console; it degrades to console-only when Matomo isn't loaded. Before `provideTochLogger` runs (or in code that never calls it), the decorators fall back to a plain console sink.
 
 ## Development (this repo)
 
